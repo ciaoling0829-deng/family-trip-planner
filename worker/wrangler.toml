@@ -1,0 +1,28 @@
+name = "trip-ai"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[vars]
+FIREBASE_PROJECT_ID = "你的專案ID"
+# 家人的 Google 帳號，用逗號分隔（要跟 Firebase 規則裡的名單一致）
+FAMILY_EMAILS = "you@gmail.com,family1@gmail.com"
+# 你的 GitHub Pages 網址（只要網域，不含路徑），本機測試可加 http://localhost:8080
+ALLOWED_ORIGINS = "https://你的GitHub帳號.github.io"
+# 使用哪個 AI：gemini（有免費額度）或 claude（需 Claude Console 付費）
+AI_PROVIDER = "gemini"
+GEMINI_MODEL = "gemini-3.8-flash"
+CLAUDE_MODEL = "claude-sonnet-5-5"
+DAILY_LIMIT = "40"
+# 選填：自動存到 Google 雲端硬碟。填 Apps Script 部署後的網址，並執行 npx wrangler secret put DRIVE_SECRET
+DRIVE_SCRIPT_URL = ""
+
+# 選填：每人每日次數上限。先執行 `npx wrangler kv namespace create USAGE`，
+# 把顯示的 id 填進下面並取消註解。
+# [[kv_namespaces]]
+# binding = "USAGE"
+# id = "貼上KV的id"
+
+# 用家庭連結（不用登入）時，執行：npx wrangler secret put FAMILY_KEY（填家庭代碼）
+# API 金鑰不要寫在這裡！請執行：
+#   npx wrangler secret put GEMINI_API_KEY      （用 Gemini 時）
+#   npx wrangler secret put ANTHROPIC_API_KEY   （改用 Claude 時）

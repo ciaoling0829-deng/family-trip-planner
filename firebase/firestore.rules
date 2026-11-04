@@ -1,0 +1,41 @@
+rules_version = '2';
+// 兩種進入方式，可以只用一種，也可以兩種都開：
+//
+// 1. 家庭連結（不用登入）：打開含有家庭代碼的連結就能使用。
+//    把下面 FAMILY_KEY 的值換成你的家庭代碼（和 Cloudflare Worker 的 FAMILY_KEY 一樣）。
+//    換代碼：改這裡和 Worker，再把新連結傳給家人；舊連結會立刻失效，資料不會不見。
+//
+// 2. Google 帳號登入：把家人的 Email（全部小寫）加進 isFamily() 的清單。
+//
+// 改完在 Firebase 主控台按「發布」。storage.rules 也要改成一樣。
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function familyKey() { return "請換成你的家庭代碼"; }
+
+    function isFamily() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in [
+          'you@gmail.com',
+          'family1@gmail.com'
+        ];
+    }
+    // 用家庭連結進來的裝置：先在 access/{自己的 uid} 寫入正確的代碼，之後才能讀寫資料
+    function joined() {
+      return request.auth != null
+        && familyKey().size() >= 16
+        && exists(/databases/$(database)/documents/access/$(request.auth.uid))
+        && get(/databases/$(database)/documents/access/$(request.auth.uid)).data.key == familyKey();
+    }
+
+    match /access/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && familyKey().size() >= 16 && request.resource.data.key == familyKey();
+    }
+    // App 的資料：旅行（含行程、照片、日記等）、家人名稱、旅行地候選
+    match /trips/{rest=**} { allow read, write: if isFamily() || joined(); }
+    match /users/{rest=**} { allow read, write: if isFamily() || joined(); }
+    match /ideas/{rest=**} { allow read, write: if isFamily() || joined(); }
+  }
+}

@@ -1,0 +1,27 @@
+rules_version = '2';
+// 照片和影片的存取規則，要和 firestore.rules 的家庭代碼、家人名單一致。
+service firebase.storage {
+  match /b/{bucket}/o {
+    function familyKey() { return "請換成你的家庭代碼"; }
+    function isFamily() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in [
+          'you@gmail.com',
+          'family1@gmail.com'
+        ];
+    }
+    function joined() {
+      return request.auth != null
+        && familyKey().size() >= 16
+        && firestore.exists(/databases/(default)/documents/access/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.key == familyKey();
+    }
+    match /trips/{tripId}/{allPaths=**} {
+      allow read, delete: if isFamily() || joined();
+      allow create, update: if (isFamily() || joined())
+        && request.resource.size < 4 * 1024 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType.matches('video/.*'));
+    }
+  }
+}
