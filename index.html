@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>家庭旅遊手帳</title>
+<meta name="theme-color" content="#EEF2F0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1714" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="旅遊手帳">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Noto+Sans+TC:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>
+  :root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+  body{margin:0}
+  [hidden]{display:none!important}
+  img{max-width:100%}
+</style>
+</head>
+<body>
+
+<!-- sign-in -->
+<div class="gate wrap" id="gate">
+  <div class="gate-card">
+    <svg viewBox="0 0 64 64" width="64" height="64" style="margin:0 auto" aria-hidden="true"><rect x="6" y="10" width="52" height="46" rx="10" fill="var(--accent)"/><path d="M6 24h52" stroke="var(--accent-ink)" stroke-width="3"/><circle cx="22" cy="40" r="5" fill="var(--lantern)"/><path d="M30 40h18" stroke="var(--accent-ink)" stroke-width="3" stroke-linecap="round"/></svg>
+    <h1>家庭旅遊手帳</h1>
+    <p class="sub" id="gateMsg">全家一起排行程、控制預算、記錄旅行。</p>
+    <button class="primary" id="btnSignIn" type="button" hidden>
+      <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+      用 Google 帳號登入
+    </button>
+    <div id="gateLink" class="form" hidden></div>
+    <p class="msg" id="gateErr"></p>
+  </div>
+</div>
+
+<div id="app" hidden>
+<header class="top wrap">
+  <div class="top-row">
+    <div>
+      <div class="eyebrow" id="hDates"></div>
+      <h1 id="hTitle">載入中…</h1>
+    </div>
+    <div class="top-actions"><button class="icon-btn icon-only" id="btnTrips" type="button" aria-label="切換旅行" title="切換旅行"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4 3 8l4 4M3 8h13a4 4 0 0 1 4 4M17 20l4-4-4-4M21 16H8a4 4 0 0 1-4-4"/></svg></button><button class="icon-btn icon-only" id="btnSave" type="button" aria-label="儲存目前的專案" title="儲存"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg><span class="dirty-dot" aria-hidden="true"></span></button><button class="icon-btn icon-only" id="btnSettings" type="button" aria-label="設定" title="設定"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button></div>
+  </div>
+  <div class="status"><span class="dot off" id="syncDot"></span><span id="syncText">連線中</span><span id="who"></span></div>
+  <div class="banner" id="banner" hidden></div>
+</header>
+
+<main class="wrap">
+  <section data-tab="plan">
+    <div class="tools-row">
+      <button class="tool" type="button" id="btnIdeas"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>旅行地<span class="badge-s" id="ideaCount" hidden></span></button>
+      <button class="tool" type="button" id="btnFares"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14.5 21 8l-1.5-2.5-6 1.5L8 3 6.5 4l3 4.5-4 1.2L3.8 8 2.5 9z"/><path d="M3 20h18"/></svg>機票比價<span class="badge-s" id="fareCount" hidden></span></button>
+    </div>
+    <button class="wish-bar" type="button" data-wishes id="wishBar" hidden></button>
+    <button class="wish-bar shop-bar" type="button" data-shop id="shopBar" hidden></button>
+    <div class="days" id="days" role="group" aria-label="選擇日期"></div>
+    <div class="day-head"><h2 id="dayTitle"></h2><span class="num" id="dayCost"></span></div>
+    <div id="dayPlan"></div>
+    <div class="tools-row" id="btnSuggest" hidden>
+      <button class="tool" type="button" data-route><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8 18h6a3.5 3.5 0 0 0 0-7h-4a3.5 3.5 0 0 1 0-7h6"/></svg>排行程和路線</button>
+      <button class="tool" type="button" data-suggest><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z"/></svg>找餐廳景點</button>
+    </div>
+    <div class="timeline" id="timeline"></div>
+  </section>
+
+  <section data-tab="budget" id="tabBudget" hidden></section>
+
+  <section data-tab="talk" hidden>
+    <div class="panel">
+      <h3>行李準備清單 <span class="sub num" id="packCount"></span></h3>
+      <div class="bar thin"><i id="packBar" style="width:0"></i></div>
+      <ul class="pack-list" id="packList"></ul>
+      <form class="composer" id="packForm" style="margin-top:10px">
+        <input id="packInput" placeholder="新增要帶的東西" autocomplete="off">
+        <button class="primary sm" type="submit">加入</button>
+      </form>
+      <div class="quick" id="packQuick"></div>
+    </div>
+    <div class="panel">
+      <h3>給大家的留言</h3>
+      <div class="composer">
+        <textarea id="newCmt" rows="2" placeholder="寫下想跟家人討論的事"></textarea>
+        <button class="primary sm" id="sendCmt" type="button">送出</button>
+      </div>
+    </div>
+    <div class="thread" id="thread"></div>
+  </section>
+
+  <section data-tab="journal" hidden>
+    <div class="fold-head"><span class="sub" id="foldHint"></span><div class="row-actions"><button class="link" type="button" data-foldall="1">全部展開</button><button class="link" type="button" data-foldall="0">全部收合</button></div></div>
+    <div id="folders" style="display:grid;gap:14px"></div>
+    <details class="panel fold" data-fold="snap">
+      <summary><h3>專案存檔 <span class="sub" id="snapCount"></span></h3></summary>
+      <div class="fold-body">
+      <p class="sub" style="margin:0 0 12px">把目前的旅行設定、每日行程和行李清單存成一個版本，之後可以還原。</p>
+      <div class="row-actions"><button class="primary sm" id="btnSnap" type="button">儲存目前的專案</button></div>
+      <div id="snapList" style="margin-top:8px"></div>
+      </div>
+    </details>
+    <details class="panel fold" data-fold="album">
+      <summary><h3>雲端相簿說明</h3></summary>
+      <div class="fold-body">
+      <p class="sub" style="margin:0">每一天會自動建立一個資料夾，名稱是「專案名稱＋Day 幾」。照片和影片以原檔上傳到雲端、不壓縮，iPhone 的 HEIC 照片和 MOV 影片也可以。</p>
+      </div>
+    </details>
+  </section>
+
+  <section data-tab="export" hidden>
+    <div class="panel">
+      <h3>輸出 PDF</h3>
+      <p class="sub" style="margin:0 0 12px">內容包含每日行程、預算明細、行李清單、旅行日記和未解決的留言。</p>
+      <button class="primary" id="btnPdf" type="button">產生行程 PDF</button>
+      <p class="msg" id="pdfMsg"></p>
+    </div>
+    <div class="panel">
+      <h3>自動存到 Google 雲端硬碟</h3>
+      <div id="drivePanel"></div>
+      <details class="fold" style="margin-top:12px"><summary><h3 style="margin:0;font-size:14px">不用自動存時，手動存檔的方法</h3></summary><div class="fold-body">
+      <ol class="steps">
+        <li><span>按上方「產生行程 PDF」</span></li>
+        <li><span>在 iPhone 跳出的選單選「儲存到檔案」</span></li>
+        <li><span>位置選「Google 雲端硬碟」（需先安裝 Google 雲端硬碟 App），再選資料夾</span></li>
+      </ol>
+      </div></details>
+    </div>
+    <div class="panel">
+      <h3>帳號</h3>
+      <div class="row-actions"><img class="avatar" id="meAvatar" alt="" hidden><span id="meName" class="sub"></span><button class="ghost" id="btnSignOut" type="button">登出</button></div>
+    </div>
+  </section>
+</main>
+
+<button class="fab" id="fab" type="button" hidden>＋ 新增行程</button>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-go="plan" aria-selected="true" type="button"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>行程</button>
+  <button role="tab" data-go="budget" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M16 15h2"/></svg>預算</button>
+  <button role="tab" data-go="talk" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>留言<span class="badge" id="talkBadge" hidden></span></button>
+  <button role="tab" data-go="journal" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><path d="M6 3.5h11a1.5 1.5 0 0 1 1.5 1.5v15.5H7A2 2 0 0 1 5 18.5V4.5a1 1 0 0 1 1-1z"/><path d="M5 18.5A2 2 0 0 1 7 16.5h11.5M9 7.5h6M9 11h4"/></svg>日誌</button>
+  <button role="tab" data-go="export" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg>輸出</button>
+</nav>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden></div>
+<div class="toast" id="toast" hidden></div>
+<div id="pdfStage" aria-hidden="true"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
