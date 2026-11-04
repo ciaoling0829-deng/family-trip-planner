@@ -3,13 +3,12 @@
 // ⚠️ 絕對不要把 Gemini 或 Claude 的 API 金鑰寫在這裡或任何網頁檔案裡，金鑰只放在 Cloudflare Worker 的 Secret。
 
 export const FIREBASE_CONFIG = {
-  // 從 Firebase 主控台 →「專案設定」→「你的應用程式」→ 網頁應用程式的 firebaseConfig 複製過來
-  apiKey: "請填入",
-  authDomain: "你的專案ID.firebaseapp.com",
-  projectId: "你的專案ID",
-  storageBucket: "你的專案ID.firebasestorage.app",
-  messagingSenderId: "請填入",
-  appId: "請填入",
+  apiKey: "AIzaSyBN1H3pprJQ_gVqMBBpVOFiB5zpRDHAD98",
+  authDomain: "family-trip-652b4.firebaseapp.com",
+  projectId: "family-trip-652b4",
+  storageBucket: "family-trip-652b4.firebasestorage.app",
+  messagingSenderId: "955880533678",
+  appId: "1:955880533678:web:7a17aed47d22f59eb3873f",
 };
 
 // 怎麼進入 App：
