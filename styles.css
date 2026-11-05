@@ -398,3 +398,5 @@ details.copy-box:not([open]){padding-block:12px}
 
 .code-box{font-family:var(--f-num);font-size:13px;background:var(--sunk);border-radius:10px;padding:8px 10px;overflow-wrap:anywhere;user-select:all;text-align:left}
 #gateLink{text-align:left;margin-top:4px}
+.vid-ph{display:grid;place-items:center;width:100%;height:100%;min-height:80px;background:var(--sunk);color:var(--muted);font-size:26px;border-radius:inherit}
+.viewer .vid-ph{min-height:200px}

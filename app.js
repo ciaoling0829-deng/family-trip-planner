@@ -8,6 +8,9 @@ import { getStorage, ref as sref, uploadBytesResumable, getDownloadURL, deleteOb
 import * as CFG from "./config.js";
 const { FIREBASE_CONFIG, AI_PROXY_URL, DEFAULT_ORIGIN } = CFG;
 const LINK_MODE = (CFG.ACCESS_MODE||"google")==="link";
+// 照片存哪裡："drive" 直接存到 Google 雲端硬碟（不用 Firebase Storage）；"firebase" 存到 Firebase Storage（要 Blaze 方案）
+const PHOTO_DRIVE = (CFG.PHOTO_STORAGE||"drive")!=="firebase";
+const DRIVE_MAX = 30*1024*1024;
 
 /* ---------- constants ---------- */
 const CATS = {
@@ -336,7 +339,7 @@ function renderJournal(){
       <div class="fold-body folder">
       ${driveBlock(i)}
       ${entriesBlock(i)}
-      ${loose(files).length?`<div class="sub">其他照片</div><div class="grid">${loose(files).map(m=>`<button class="thumb" type="button" data-media="${esc(m.id)}" aria-label="${esc(m.name)}">${m.type?.startsWith("video")?`<video src="${esc(m.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="tag">影片</span>`:`<img src="${esc(m.url)}" alt="" loading="lazy">`}</button>`).join("")}</div>`:""}
+      ${loose(files).length?`<div class="sub">其他照片</div><div class="grid">${loose(files).map(m=>`<button class="thumb" type="button" data-media="${esc(m.id)}" aria-label="${esc(m.name)}">${mediaTile(m)}</button>`).join("")}</div>`:""}
       <div class="row-actions"><label class="upload">＋ 上傳照片／影片<input type="file" accept="image/*,video/*" multiple data-upload="${i}"></label><span class="progress" id="prog_${i}">${up?esc(up.text):""}</span></div>
       ${up?`<div class="upbar"><i style="width:${up.pct||0}%"></i></div>`:""}
     </div>
@@ -367,7 +370,58 @@ async function saveJournal(i,patch){
   const cur=S.journal["d"+i]||{};
   return guard(()=>put("journal","d"+i,{text:cur.text||"",driveUrl:cur.driveUrl||"",...patch,...stampBy()}));
 }
+function mediaTile(m){
+  const vid=m.type?.startsWith("video");
+  if(m.drive) return `${m.thumb?`<img src="${esc(m.thumb)}" alt="" loading="lazy">`:`<span class="vid-ph" aria-hidden="true">${vid?"▶":"📄"}</span>`}${vid?`<span class="tag">影片</span>`:""}`;
+  return vid?`<video src="${esc(m.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="tag">影片</span>`:`<img src="${esc(m.url)}" alt="" loading="lazy">`;
+}
+const blobToDataUrl = b => new Promise((ok,no)=>{ const r=new FileReader(); r.onload=()=>ok(String(r.result)); r.onerror=no; r.readAsDataURL(b); });
+async function videoPoster(file){
+  const url=URL.createObjectURL(file);
+  try{
+    return await new Promise(ok=>{
+      const v=document.createElement("video"); v.muted=true; v.playsInline=true; v.preload="auto"; v.src=url;
+      const done=x=>{ clearTimeout(t); ok(x); }; const t=setTimeout(()=>done(null),5000);
+      v.onloadeddata=()=>{ try{ v.currentTime=Math.min(0.5,(v.duration||1)/2); }catch{ done(null); } };
+      v.onseeked=()=>{ try{ const sc=Math.min(1,360/Math.max(v.videoWidth,v.videoHeight)); const c=document.createElement("canvas"); c.width=Math.max(1,Math.round(v.videoWidth*sc)); c.height=Math.max(1,Math.round(v.videoHeight*sc)); c.getContext("2d").drawImage(v,0,0,c.width,c.height); c.toBlob(b=>done(b),"image/jpeg",0.7); }catch{ done(null); } };
+      v.onerror=()=>done(null);
+    });
+  }finally{ URL.revokeObjectURL(url); }
+}
+async function makeThumb(file){
+  try{
+    let b=null;
+    if(file.type?.startsWith("image")){ b=await shrinkImage(file,360,0.7); if(b===file) b=null; }
+    else if(file.type?.startsWith("video")) b=await videoPoster(file);
+    if(b&&b.size<200*1024) return await blobToDataUrl(b);
+  }catch(e){ console.warn("thumb",e); }
+  return "";
+}
+function uploadToDrive(day,files,entryId){
+  const tid=S.tripId, folder=folderName(day);
+  if(DRIVE.state==="notset"){ toast("雲端硬碟還沒設定好，請到「輸出」按「測試連線」檢查。"); return; }
+  const big=[...files].filter(f=>f.size>DRIVE_MAX), list=[...files].filter(f=>f.size<=DRIVE_MAX);
+  if(!list.length){ toast(`${big.length} 個檔案超過 30 MB，請用「打開 Google 雲端硬碟資料夾」上傳。`); return; }
+  (async()=>{
+    let ok=0; const fail=[]; let folderUrl="";
+    for(let k=0;k<list.length;k++){
+      const file=list[k];
+      uploading[day]={text:`上傳到雲端硬碟 ${k+1}/${list.length}・${file.name}（${mb(file.size)}）`,pct:k/list.length*100}; renderJournal();
+      const thumb=await makeThumb(file);
+      const j=await driveSave({sub:folder,filename:file.name,mimeType:file.type||"application/octet-stream",blob:file});
+      if(!j){ fail.push(file.name); if(DRIVE.state==="notset") break; continue; }
+      folderUrl=j.folderUrl||folderUrl;
+      try{ await addDoc(collection(db,"trips",tid,"media"),{day,...(entryId?{entryId}:{}),drive:true,url:j.url||"",thumb,name:file.name,type:file.type||"",size:file.size,folder,...stampBy()}); ok++; }
+      catch(e){ console.warn(e); fail.push(file.name); }
+    }
+    delete uploading[day]; renderJournal();
+    const msg=[]; if(ok) msg.push(`已上傳 ${ok} 個檔案到雲端硬碟「${folder}」`); if(fail.length) msg.push(`${fail.length} 個沒有成功：${fail.join("、")}`); if(big.length) msg.push(`${big.length} 個超過 30 MB，請用雲端硬碟資料夾連結上傳`);
+    toast(msg.join("；")||"沒有上傳任何檔案");
+    if(folderUrl&&!S.journal["d"+day]?.driveUrl) saveJournal(day,{driveUrl:folderUrl});
+  })();
+}
 function uploadFiles(day,files,entryId){
+  if(PHOTO_DRIVE) return uploadToDrive(day,files,entryId);
   const tid=S.tripId, folder=folderName(day);
   let i=0, ok=0, fail=[]; const toDrive=[]; let big=0;
   const next=()=>{
@@ -384,14 +438,14 @@ function uploadFiles(day,files,entryId){
 function mediaSheet(id){
   const m=S.media.find(x=>x.id===id); if(!m) return;
   openSheet(`<h2 style="font-size:16px;word-break:break-all">${esc(m.name)}</h2>
-    <div class="viewer">${m.type?.startsWith("video")?`<video src="${esc(m.url)}" controls playsinline></video>`:`<img src="${esc(m.url)}" alt="${esc(m.name)}">`}</div>
+    <div class="viewer">${m.drive?(m.thumb?`<img src="${esc(m.thumb)}" alt="${esc(m.name)}">`:`<div class="vid-ph">${m.type?.startsWith("video")?"影片":"檔案"}</div>`):m.type?.startsWith("video")?`<video src="${esc(m.url)}" controls playsinline></video>`:`<img src="${esc(m.url)}" alt="${esc(m.name)}">`}</div>
     <p class="sub">${esc(m.folder||folderName(m.day))}・${mb(m.size||0)}・${esc(nameOf(m.by))} 於 ${stamp(m.at)} 上傳</p>
-    <div class="sheet-actions"><a class="primary" style="text-align:center;text-decoration:none" href="${esc(m.url)}" target="_blank" rel="noopener">開啟原檔</a><button class="danger" type="button" id="rmBtn">刪除</button></div>
-    <p class="est">開啟原檔後，長按照片或按分享，就能存到手機或 Google 雲端硬碟。</p>`);
+    <div class="sheet-actions">${m.url?`<a class="primary" style="text-align:center;text-decoration:none" href="${esc(m.url)}" target="_blank" rel="noopener">${m.drive?"在 Google 雲端硬碟開啟原檔":"開啟原檔"}</a>`:""}<button class="danger" type="button" id="rmBtn">${m.drive?"從 App 移除":"刪除"}</button></div>
+    <p class="est">${m.drive?"這裡顯示的是小圖，原尺寸檔案在 Google 雲端硬碟。從 App 移除不會刪掉雲端硬碟裡的原檔。":"開啟原檔後，長按照片或按分享，就能存到手機或 Google 雲端硬碟。"}</p>`);
   const rm=$("rmBtn"); let armed=false;
   rm.onclick=async()=>{ if(!armed){ armed=true; rm.textContent="再按一次確認刪除"; return; }
-    try{ await deleteObject(sref(storage,m.path)); }catch(e){ if(e?.code!=="storage/object-not-found"){ toast("刪除失敗，請稍後再試"); return; } }
-    if(await guard(()=>del("media",m.id))){ closeSheet(); toast("已刪除"); } };
+    if(!m.drive&&m.path){ try{ await deleteObject(sref(storage,m.path)); }catch(e){ if(e?.code!=="storage/object-not-found"){ toast("刪除失敗，請稍後再試"); return; } } }
+    if(await guard(()=>del("media",m.id))){ closeSheet(); toast(m.drive?"已從 App 移除（雲端硬碟的原檔還在）":"已刪除"); } };
 }
 async function saveSnapshot(auto){
   const body={trip:S.trip,items:S.items,packing:S.packing,dayplans:S.dayplans,hash:curHash(),auto:!!auto,...stampBy()};
@@ -899,13 +953,13 @@ function openLightbox(src,caption){
   lb.hidden=false; lb.querySelector(".lb-x").focus();
 }
 function closeLightbox(){ const lb=$("lightbox"); if(lb){ lb.hidden=true; lb.querySelector("img").removeAttribute("src"); } }
-async function shrinkImage(file,max=1280){
+async function shrinkImage(file,max=1280,q=0.85){
   try{
     const bmp=await createImageBitmap(file);
     const sc=Math.min(1,max/Math.max(bmp.width,bmp.height));
     const c=document.createElement("canvas"); c.width=Math.max(1,Math.round(bmp.width*sc)); c.height=Math.max(1,Math.round(bmp.height*sc));
     c.getContext("2d").drawImage(bmp,0,0,c.width,c.height);
-    const blob=await new Promise(r=>c.toBlob(r,"image/jpeg",0.85));
+    const blob=await new Promise(r=>c.toBlob(r,"image/jpeg",q));
     if(blob&&blob.size) return blob;
   }catch(e){ console.warn("shrink",e); }
   return file;
@@ -913,8 +967,13 @@ async function shrinkImage(file,max=1280){
 const shopImgErr = e => ({too_large:"圖片太大了，請換一張",unsupported_type:"這種圖片格式不支援，請換一張 JPG 或 PNG",quota_or_state:"雲端空間已滿，請先刪除一些照片"}[e?.code] || "圖片沒有上傳成功，請再試一次");
 const canShopImg = () => true;
 const shopSrc = x => x.img || "";
-async function uploadShopImg(file){ const blob=await shrinkImage(file); const ext=blob.type==="image/jpeg"?"jpg":((file.name.split(".").pop()||"img").toLowerCase()); const path=`trips/${S.tripId}/shopping/${Date.now()}.${ext}`; const task=uploadBytesResumable(sref(storage,path),blob,{contentType:blob.type||file.type||"image/jpeg"}); await new Promise((ok,no)=>task.on("state_changed",()=>{},no,ok)); return {img:await getDownloadURL(task.snapshot.ref),imgPath:path}; }
-async function delShopImg(x){ if(x.imgPath) try{ await deleteObject(sref(storage,x.imgPath)); }catch(e){ console.warn(e); } }
+async function uploadShopImg(file){
+  if(PHOTO_DRIVE){ // 不用 Firebase Storage：縮成小圖，直接存在購物項目裡
+    for(const [max,q] of [[900,0.8],[700,0.7],[500,0.65]]){ const b=await shrinkImage(file,max,q); if(b!==file&&b.size<=350*1024) return {img:await blobToDataUrl(b),imgPath:""}; }
+    throw {code:"too_large"};
+  }
+  const blob=await shrinkImage(file); const ext=blob.type==="image/jpeg"?"jpg":((file.name.split(".").pop()||"img").toLowerCase()); const path=`trips/${S.tripId}/shopping/${Date.now()}.${ext}`; const task=uploadBytesResumable(sref(storage,path),blob,{contentType:blob.type||file.type||"image/jpeg"}); await new Promise((ok,no)=>task.on("state_changed",()=>{},no,ok)); return {img:await getDownloadURL(task.snapshot.ref),imgPath:path}; }
+async function delShopImg(x){ if(x.imgPath&&!PHOTO_DRIVE) try{ await deleteObject(sref(storage,x.imgPath)); }catch(e){ console.warn(e); } }
 function renderShopBar(){
   const b=$("shopBar"); if(!b) return;
   b.hidden=!S.trip;
@@ -1043,7 +1102,7 @@ function entryCard(e){
     <div class="fold-body">
       ${e.place?`<div class="sub">📍 ${esc(e.place)}</div>`:""}
       ${String(e.text||"").split("\n").slice(1).join("\n").trim()?`<div class="e-text">${esc(String(e.text).split("\n").slice(1).join("\n").trim())}</div>`:""}
-      ${photos.length?`<div class="grid">${photos.map(m=>`<button class="thumb" type="button" data-media="${esc(m.id)}" aria-label="${esc(m.name)}">${m.type?.startsWith("video")?`<video src="${esc(m.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="tag">影片</span>`:`<img src="${esc(m.url)}" alt="" loading="lazy">`}</button>`).join("")}</div>`:""}
+      ${photos.length?`<div class="grid">${photos.map(m=>`<button class="thumb" type="button" data-media="${esc(m.id)}" aria-label="${esc(m.name)}">${mediaTile(m)}</button>`).join("")}</div>`:""}
       <div class="row-actions"><span class="sub">${esc(nameOf(e.by))}${e.at?"・"+stamp(e.at):""}</span>${canW()?`<button class="link" type="button" data-editentry="${esc(e.id)}">編輯</button>`:""}</div>
     </div>
   </details>`;
@@ -1468,7 +1527,7 @@ function renderDriveInto(el){ if(!el) return;
   const opt=(k,label)=>`<label class="shop-check"><input type="checkbox" data-driveopt="${k}" ${driveOpt(k)?"checked":""}> ${label}</label>`;
   el.innerHTML=`<p class="sub" style="margin:0 0 10px">會在你的雲端硬碟資料夾裡自動建立「${esc(t.title)}」資料夾；每天的照片放進「${esc(folderName(0))}」這樣的子資料夾，備份檔放在「專案存檔」。</p>
     <div class="drive-status">${st}</div>
-    <div style="display:grid;gap:8px;margin:12px 0">${opt("snap","按「儲存目前的專案」時，自動存行程表 PDF 和備份檔")}${opt("pdf","按「產生行程 PDF」時，也存一份")}${opt("photos","上傳照片和影片時，同步到每天的資料夾（30 MB 以下）")}</div>
+    <div style="display:grid;gap:8px;margin:12px 0">${opt("snap","按「儲存目前的專案」時，自動存行程表 PDF 和備份檔")}${opt("pdf","按「產生行程 PDF」時，也存一份")}${PHOTO_DRIVE?`<p class="sub" style="margin:0">照片和影片會直接上傳到每天的資料夾（每個檔案 30 MB 以下，更大的請用雲端硬碟資料夾連結上傳）。</p>`:opt("photos","上傳照片和影片時，同步到每天的資料夾（30 MB 以下）")}</div>
     <div class="row-actions"><button class="ghost" type="button" data-driveping>測試連線</button>${DRIVE.folderUrl?`<a class="link" href="${esc(DRIVE.folderUrl)}" target="_blank" rel="noopener noreferrer">打開「${esc(t.title)}」資料夾 ↗</a>`:""}</div>`;
 }
 async function backupSnapshot(body){
