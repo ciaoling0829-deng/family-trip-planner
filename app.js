@@ -226,6 +226,7 @@ function render(){
   $("btnTrips").hidden = S.trips.length<1;
   if(t && S.day >= (t.days||1)) S.day=0;
   renderPlan(); renderBudget(); renderTalk(); renderJournal();
+  if(t&&S.synced&&!pruneTried.has(S.tripId)){ pruneTried.add(S.tripId); const id=S.tripId; setTimeout(()=>{ if(S.tripId===id) autoPrune(); },3000); }
   $("fab").hidden = S.tab!=="plan" || !t;
   $("ideaCount").hidden=!S.ideas.length; $("ideaCount").textContent=S.ideas.length;
   $("fareCount").hidden=!S.fares.length; $("fareCount").textContent=S.fares.length;
@@ -370,6 +371,8 @@ async function saveJournal(i,patch){
   const cur=S.journal["d"+i]||{};
   return guard(()=>put("journal","d"+i,{text:cur.text||"",driveUrl:cur.driveUrl||"",...patch,...stampBy()}));
 }
+const idFromUrl = u => (String(u||"").match(/\/d\/([\w-]{10,})/)||[])[1]||"";
+const driveIdOf = m => m.driveId||idFromUrl(m.url);
 function mediaTile(m){
   const vid=m.type?.startsWith("video");
   if(m.drive) return `${m.thumb?`<img src="${esc(m.thumb)}" alt="" loading="lazy">`:`<span class="vid-ph" aria-hidden="true">${vid?"▶":"📄"}</span>`}${vid?`<span class="tag">影片</span>`:""}`;
@@ -411,7 +414,7 @@ function uploadToDrive(day,files,entryId){
       const j=await driveSave({sub:folder,filename:file.name,mimeType:file.type||"application/octet-stream",blob:file});
       if(!j){ fail.push(file.name); if(DRIVE.state==="notset") break; continue; }
       folderUrl=j.folderUrl||folderUrl;
-      try{ await addDoc(collection(db,"trips",tid,"media"),{day,...(entryId?{entryId}:{}),drive:true,url:j.url||"",thumb,name:file.name,type:file.type||"",size:file.size,folder,...stampBy()}); ok++; }
+      try{ await addDoc(collection(db,"trips",tid,"media"),{day,...(entryId?{entryId}:{}),drive:true,driveId:j.id||idFromUrl(j.url),url:j.url||"",thumb,name:file.name,type:file.type||"",size:file.size,folder,...stampBy()}); ok++; }
       catch(e){ console.warn(e); fail.push(file.name); }
     }
     delete uploading[day]; renderJournal();
@@ -1527,8 +1530,8 @@ function renderDriveInto(el){ if(!el) return;
   const opt=(k,label)=>`<label class="shop-check"><input type="checkbox" data-driveopt="${k}" ${driveOpt(k)?"checked":""}> ${label}</label>`;
   el.innerHTML=`<p class="sub" style="margin:0 0 10px">會在你的雲端硬碟資料夾裡自動建立「${esc(t.title)}」資料夾；每天的照片放進「${esc(folderName(0))}」這樣的子資料夾，備份檔放在「專案存檔」。</p>
     <div class="drive-status">${st}</div>
-    <div style="display:grid;gap:8px;margin:12px 0">${opt("snap","按「儲存目前的專案」時，自動存行程表 PDF 和備份檔")}${opt("pdf","按「產生行程 PDF」時，也存一份")}${PHOTO_DRIVE?`<p class="sub" style="margin:0">照片和影片會直接上傳到每天的資料夾（每個檔案 30 MB 以下，更大的請用雲端硬碟資料夾連結上傳）。</p>`:opt("photos","上傳照片和影片時，同步到每天的資料夾（30 MB 以下）")}</div>
-    <div class="row-actions"><button class="ghost" type="button" data-driveping>測試連線</button>${DRIVE.folderUrl?`<a class="link" href="${esc(DRIVE.folderUrl)}" target="_blank" rel="noopener noreferrer">打開「${esc(t.title)}」資料夾 ↗</a>`:""}</div>`;
+    <div style="display:grid;gap:8px;margin:12px 0">${opt("snap","按「儲存目前的專案」時，自動存行程表 PDF 和備份檔")}${opt("pdf","按「產生行程 PDF」時，也存一份")}${opt("prune",`旅行結束 10 天後，自動清除舊的存檔紀錄，只留最新一份${pruneDate()?`（${dLabel(pruneDate())} 起）`:""}`)}${PHOTO_DRIVE?`<p class="sub" style="margin:0">照片和影片會直接上傳到每天的資料夾（每個檔案 30 MB 以下，更大的請用雲端硬碟資料夾連結上傳）。</p>`:opt("photos","上傳照片和影片時，同步到每天的資料夾（30 MB 以下）")}</div>
+    <div class="row-actions"><button class="ghost" type="button" data-driveping>測試連線</button>${S.canWrite===false?"":`<button class="ghost" type="button" data-driveclean>清理沒用到的照片影片</button>`}${DRIVE.folderUrl?`<a class="link" href="${esc(DRIVE.folderUrl)}" target="_blank" rel="noopener noreferrer">打開「${esc(t.title)}」資料夾 ↗</a>`:""}</div>`;
 }
 async function backupSnapshot(body){
   if(!driveOpt("snap")||DRIVE.state==="notset"||!S.trip) return;
@@ -1543,6 +1546,54 @@ async function syncPhotosToDrive(day,files,big){
   let n=0, url="";
   for(const f of files){ const j=await driveSave({sub:folderName(day),filename:f.name,mimeType:f.type,blob:f}); if(!j) break; n++; url=j.folderUrl||url; }
   if(n){ toast(`${n} 個檔案也同步到雲端硬碟「${folderName(day)}」了${big?`（${big} 個超過 30 MB 沒有同步）`:""}`); if(url&&!S.journal["d"+day]?.driveUrl) saveJournal(day,{driveUrl:url}); }
+}
+
+/* ---------- 整理雲端硬碟：自動清除舊存檔、清理沒用到的照片影片 ---------- */
+const pruneTried=new Set();
+const pruneDate = () => { const t=S.trip; if(!t?.startDate) return null; const d=dayDate((t.days||1)-1); d.setDate(d.getDate()+10); return d; };
+async function autoPrune(){
+  const t=S.trip, d=pruneDate();
+  if(!t||!d||Date.now()<d.getTime()||!driveOpt("prune")||S.canWrite===false) return;
+  let n=0;
+  // App 裡的存檔紀錄：只留最新一份
+  const old=[...(S.snaps||[])].sort((a,b)=>b.at-a.at).slice(1);
+  for(const x of old) try{ await del("snapshots",x.id); n++; }catch(e){ console.warn(e); }
+  // 雲端硬碟「專案存檔」：只留最新一份（移到垃圾桶）
+  if(AI_PROXY_URL&&DRIVE.state!=="notset") try{ const j=await driveCall({action:"prune",trip:safeName(t.title),keep:1}); n+=j.trashed||0; }catch(e){ console.warn("prune",e); }
+  if(n) toast(`旅行已結束 10 天，已清除 ${n} 份舊的存檔紀錄，只留最新一份`);
+}
+const daySubs = () => Array.from({length:S.trip?.days||1},(_,i)=>folderName(i));
+async function cleanSheet(){
+  if(!S.trip) return;
+  if(!AI_PROXY_URL||DRIVE.state==="notset"){ toast("雲端硬碟還沒設定好，請先按「測試連線」。"); return; }
+  openSheet(`<h2>清理沒用到的照片影片</h2><div class="drive-status"><span class="spinner"></span><span>正在比對雲端硬碟和 App 裡的照片…</span></div>`,"clean");
+  let files;
+  try{ files=(await driveCall({action:"list",trip:safeName(S.trip.title),subs:daySubs()})).files||[]; }
+  catch(e){ driveFail(e); openSheet(`<h2>清理沒用到的照片影片</h2><p class="msg">${esc(driveErr(e))}</p>`,"clean"); return; }
+  const used=new Set(S.media.map(driveIdOf).filter(Boolean));
+  const extra=files.filter(f=>!used.has(f.id)&&/^(image|video)\//.test(f.mime||""));
+  if(!extra.length){ openSheet(`<h2>清理沒用到的照片影片</h2><p>雲端硬碟每天的資料夾裡，沒有 App 沒用到的照片或影片，不需要清理。</p><p class="sub">比對了 ${files.length} 個檔案。</p>`,"clean"); return; }
+  const isBig = f => f.size>DRIVE_MAX;
+  openSheet(`<h2>清理沒用到的照片影片</h2>
+    <div class="banner warn">這個雲端硬碟有雙向同步到 BeeStation，<b>移到垃圾桶後，BeeStation 裡的也會跟著刪除</b>。清理前，請先把旅行資料夾複製到 BeeStation 沒有同步的資料夾。</div>
+    <p class="sub">下面是雲端硬碟裡有、但 App 裡沒有用到的檔案（例如在 App 裡「從 App 移除」的照片，或直接用雲端硬碟上傳的檔案）。勾選的會移到雲端硬碟的垃圾桶，30 天內可以救回來。</p>
+    <p class="sub">超過 30 MB 的檔案通常是直接用雲端硬碟上傳的影片，預設不勾選。</p>
+    <div class="row-actions"><button class="link" type="button" id="clAll">全選</button><button class="link" type="button" id="clNone">全部不選</button></div>
+    <ul class="clean-list">${extra.map(f=>`<li><label class="shop-check"><input type="checkbox" data-clid="${esc(f.id)}" ${isBig(f)?"":"checked"}><span class="cl-txt"><b>${esc(f.name)}</b><span class="sub">${esc(f.sub)}・${mb(f.size||0)}${isBig(f)?"・可能是直接上傳的大檔":""}</span></span></label>${f.url?`<a class="link" href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">看看 ↗</a>`:""}</li>`).join("")}</ul>
+    <div class="sheet-actions"><button class="danger" type="button" id="clGo"></button></div>`,"clean");
+  const boxes=()=>[...document.querySelectorAll("[data-clid]")];
+  const go=$("clGo"); let armed=false;
+  const label=()=>{ const n=boxes().filter(b=>b.checked).length; armed=false; go.textContent=`移到垃圾桶（${n} 個）`; go.disabled=!n; };
+  boxes().forEach(b=>b.onchange=label); label();
+  $("clAll").onclick=()=>{ boxes().forEach(b=>b.checked=true); label(); };
+  $("clNone").onclick=()=>{ boxes().forEach(b=>b.checked=false); label(); };
+  go.onclick=async()=>{
+    const ids=boxes().filter(b=>b.checked).map(b=>b.dataset.clid); if(!ids.length) return;
+    if(!armed){ armed=true; go.textContent=`確定要刪除 ${ids.length} 個檔案？再按一次`; return; }
+    go.disabled=true; go.textContent="處理中…";
+    try{ const j=await driveCall({action:"trash",trip:safeName(S.trip.title),subs:daySubs(),ids}); closeSheet(); toast(`已把 ${j.trashed||0} 個檔案移到雲端硬碟的垃圾桶，30 天內可以救回來`); }
+    catch(e){ driveFail(e); go.disabled=false; label(); toast(driveErr(e)); }
+  };
 }
 
 /* ---------- settings + save button ---------- */
@@ -1694,6 +1745,7 @@ document.addEventListener("click",async e=>{
   if(e.target.closest("[data-leavelink]")){ const b=e.target.closest("[data-leavelink]"); if(b.dataset.armed){ closeSheet(); leaveLink(); } else { b.dataset.armed="1"; b.textContent="再按一次確認"; } return; }
   if(e.target.closest("[data-signout]")){ signOut(auth); return; }
   if(T("[data-driveping]")){ drivePing(); return; }
+  if(T("[data-driveclean]")){ cleanSheet(); return; }
   if((el=T("[data-tlike]"))){ el.setAttribute("aria-pressed",el.getAttribute("aria-pressed")!=="true"); return; }
   if((el=T("[data-skind]"))){ sug.kind=el.dataset.skind; document.querySelectorAll("[data-skind]").forEach(b=>b.setAttribute("aria-pressed",b===el)); return; }
   if((el=T("[data-addsug]"))){ el.disabled=true; await addSuggestion(Number(el.dataset.addsug)); return; }
