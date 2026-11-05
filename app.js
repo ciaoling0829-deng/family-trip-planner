@@ -887,7 +887,7 @@ function renderWishes(){
 }
 function renderWishPlan(){
   const out=$("wishOut"); if(!out) return;
-  if(wp.busy){ out.innerHTML=`<div class="empty"><span class="spinner"></span>正在看每個地點離哪一天最近、什麼時候去最好…</div>`; return; }
+  if(wp.busy){ out.innerHTML=`<div class="empty"><span class="spinner"></span>${esc(wp.step||"正在看每個地點離哪一天最近、什麼時候去最好…")}</div>`; return; }
   if(wp.err){ out.innerHTML=`<div class="alert warn">${esc(wp.err)}</div>`; return; }
   if(!wp.res){ out.innerHTML=""; return; }
   const n=S.trip?.days||1;
@@ -920,6 +920,9 @@ async function runWishPlan(auto){
     const n=S.trip?.days||1;
     const plans=(r?.plans||[]).map(x=>({i:Number(x.i),day:Number.isInteger(Number(x.day))&&Number(x.day)>=1&&Number(x.day)<=n?Number(x.day):null,time:/^\d{1,2}:\d{2}$/.test(x.time||"")?String(x.time).padStart(5,"0"):"",duration:String(x.duration||"").slice(0,20),why:String(x.why||"").slice(0,160),warn:String(x.warn||"").slice(0,100)})).filter(x=>list[x.i]);
     const seen=new Set(); wp.res=plans.filter(x=>!seen.has(x.i)&&seen.add(x.i)); wp.summary=String(r?.summary||"").slice(0,160);
+    // 先確認地點位置（記在這支手機，下次就不用再查），讓附近的地點排在同一天
+    wp.step="正在確認每個地點的位置，讓附近的地點排在同一天…"; renderWishes();
+    await geoMany([...list.map(wishQuery),...S.items.filter(x=>x.time).map(stopQuery),...Array.from({length:n},(_,i)=>dp(i).hotelAddr).filter(a=>a&&!isUrl(a))],(k,all)=>{ wp.step=`正在確認地點位置（${k}/${all}），讓附近的地點排在同一天…`; renderWishPlan(); });
     // 不完全照 AI 的時間：確認不和已排行程或彼此重疊、留交通時間、一天不排太滿，必要時改到空的日子
     const fixed=makeSlots(wp.res.map((x,k)=>({key:k,w:list[x.i],r:x})));
     wp.res=wp.res.map((x,k)=>{ const f=fixed[k]; if(!f) return x; return {...x,aiDay:x.day,aiTime:x.time,day:f.day,time:f.time,duration:x.duration||(f.len?`${f.len}分`:""),why:f.day==null&&f.note?`${x.why?x.why+"；":""}${f.note}`:x.why,moved:f.moved,fixNote:f.note}; });
@@ -941,6 +944,9 @@ function makeSlots(entries,{skip}={}){
   // entries: [{key, w, r}]；回傳每個 key 的 {day(1 起), time, moved, note}
   const rule=PACE_RULE[paceOf()]||PACE_RULE.relaxed, n=S.trip?.days||1, out={};
   const busy=Array.from({length:n},(_,i)=>busyOf(i,skip));
+  // 每天已經有的地點位置（行程＋當晚住宿），用來判斷新的地點離哪一天最近
+  const pts=Array.from({length:n},(_,i)=>{ const a=S.items.filter(x=>x.day===i&&x.time&&!isFlight(x)&&!(skip&&skip.has(x.id))&&!String(x.title).includes(STAY_TBD)).map(x=>geoGet(stopQuery(x))).filter(Boolean); const h=dp(i).hotelAddr&&!isUrl(dp(i).hotelAddr)?geoGet(dp(i).hotelAddr):null; if(h) a.push(h); return a; });
+  const distTo=(d,p)=>{ if(!p||!pts[d].length) return null; return Math.min(...pts[d].map(q=>km(p,q))); };
   const count=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&isPoint(x)&&!(skip&&skip.has(x.id))).length);
   // 整天的行程（例如主題樂園）會佔滿出門時間
   const anchors=Array.from({length:n},(_,i)=>{ const its=S.items.filter(x=>x.day===i&&x.autoStay); const dep=its.find(x=>x.stayRole==="depart"), ret=its.find(x=>x.stayRole==="return"); return {from:dep?toMin(dep.end||dep.time):null,to:ret?toMin(ret.time):null}; });
@@ -958,7 +964,7 @@ function makeSlots(entries,{skip}={}){
   };
   const order=entries.map((e,k)=>({...e,k})).sort((a,b)=>(prioOf(a.w)==="must"?0:1)-(prioOf(b.w)==="must"?0:1)||((a.r.day||99)-(b.r.day||99))||((a.r.time?toMin(a.r.time):9999)-(b.r.time?toMin(b.r.time):9999)));
   for(const e of order){
-    const must=prioOf(e.w)==="must", len=parseDur(e.r.duration)||DEF_DUR[e.w.cat]||60;
+    const must=prioOf(e.w)==="must", len=parseDur(e.r.duration)||DEF_DUR[e.w.cat]||60, here=geoGet(e.w.name!=null?wishQuery(e.w):null);
     const aiDay=e.r.day?e.r.day-1:null, pref=e.r.time?toMin(e.r.time):null;
     // 每一天都找一個空檔，再挑最適合的：越接近 AI 建議的時間越好、越空的日子越好、能留在 AI 建議的那天更好
     let got=null;
@@ -967,13 +973,15 @@ function makeSlots(entries,{skip}={}){
       for(let d=0;d<n;d++){
         if(pass===0&&count[d]>=rule.max) continue;
         const t=tryDay(d,pref,len,e.w.cat); if(t==null) continue;
-        const score=(pref!=null?Math.abs(t-pref):0)+(aiDay!=null&&d!==aiDay?60:0)+count[d]*50+(aiDay!=null?Math.abs(d-aiDay)*10:d);
+        // 分數越低越好：離這天其他地點越近越好（最重要）、越接近建議時間越好、這天越空越好
+        const dk=distTo(d,here), far=dk==null?(here?4:0):Math.min(dk,40);
+        const score=far*25+(pref!=null?Math.abs(t-pref)*0.25:0)+(aiDay!=null&&d!==aiDay?30:0)+count[d]*15+(aiDay!=null?Math.abs(d-aiDay)*5:d);
         if(!best||score<best.score) best={d,t,score};
       }
       if(best){ got=best; break; }
     }
     if(!got){ out[e.key]={day:null,time:"",moved:false,note:must?"每天的空檔都排不下，請自己挑一天":"時間排不下（每天都已排滿或沒有空檔）"}; continue; }
-    busy[got.d].push([got.t,got.t+len]); count[got.d]++;
+    busy[got.d].push([got.t,got.t+len]); count[got.d]++; if(here) pts[got.d].push(here);
     const moved=aiDay!==got.d||pref!==got.t;
     if(aiDay==null){ out[e.key]={day:got.d+1,time:fromMin(got.t),moved:true,len,note:`AI 原本覺得排不下，這裡找到 Day ${got.d+1} 的空檔，請確認營業時間${e.r.why?`（AI 的原因：${String(e.r.why).slice(0,40)}）`:""}`}; continue; }
     out[e.key]={day:got.d+1,time:fromMin(got.t),moved,len,note:moved?`已避開重疊${aiDay!=null&&aiDay!==got.d?`，從 Day ${aiDay+1} 改到 Day ${got.d+1}`:""}，並留 ${rule.gap} 分鐘交通時間`:""};
@@ -1720,6 +1728,13 @@ async function geocode(q){
   if(!r.ok) throw new Error("geo "+r.status);
   const j=await r.json(); const v=j?.[0]?{lat:+j[0].lat,lng:+j[0].lon}:null; GEO[q]=v; saveGeo(); return v;
 }
+const wishQuery = w => { const a=String(w.addr||"").trim(); return a&&!isUrl(a)?a:`${w.name} ${S.trip?.destination||""}`.trim(); };
+async function geoMany(qs,onStep){
+  const todo=[...new Set(qs.filter(Boolean))].filter(q=>GEO[q]===undefined).slice(0,30);
+  for(let k=0;k<todo.length;k++){ onStep&&onStep(k+1,todo.length); try{ await geocode(todo[k]); }catch(e){ console.warn("geo",e); break; } if(k<todo.length-1) await new Promise(r=>setTimeout(r,1100)); }
+}
+const geoGet = q => q&&GEO[q]?GEO[q]:null;
+function km(a,b){ const R=6371, r=Math.PI/180, dl=(b.lat-a.lat)*r, dn=(b.lng-a.lng)*r; const h=Math.sin(dl/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dn/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
 function renderDayMap(){
   const box=$("dayMapBox"); if(!box) return;
   if(!S.trip||S.tab!=="plan"){ box.innerHTML=""; mapSig=""; if(mapObj){ mapObj.remove(); mapObj=null; } return; }
