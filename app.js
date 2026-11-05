@@ -53,6 +53,8 @@ const nameOf = uid => uid && uid===S.user?.uid ? "我" : (S.users[uid]?.nick || 
 const avatarOf = uid => S.users[uid]?.photo || "";
 const iata = v => String(v||"").toUpperCase().replace(/[^A-Z]/g,"").slice(0,3);
 let toastT; function toast(m){ const t=$("toast"); t.textContent=m; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>t.hidden=true,2600); }
+function toastUndo(m,fn){ const t=$("toast"); t.innerHTML=`<span>${esc(m)}</span><button class="toast-btn" type="button">復原</button>`; t.hidden=false; clearTimeout(toastT);
+  t.querySelector("button").onclick=async()=>{ t.hidden=true; clearTimeout(toastT); await fn(); }; toastT=setTimeout(()=>t.hidden=true,5000); }
 const store = { get(k){ try{ return localStorage.getItem(k); }catch{ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch{} } };
 
 /* ---------- data layer ---------- */
@@ -258,18 +260,85 @@ function renderPlan(){
     if(prevIt && !isFlight(prevIt) && !isFlight(it)) html+=legRow(prevIt,it);
     prevIt=it;
     const c=CATS[it.cat]||CATS.other; const open=S.comments.filter(x=>x.itemId===it.id&&!x.resolved).length; const cost=costOf(it);
-    html+=`<button class="item" type="button" data-item="${esc(it.id)}" style="--cat:var(${c.v})">
+    const canDrag=S.canWrite!==false&&it.time&&!it.flightItem&&!isFlight(it)&&!it.autoStay;
+    html+=`<div class="item" role="button" tabindex="0" data-item="${esc(it.id)}" ${canDrag?`data-drag="${esc(it.id)}"`:""} style="--cat:var(${c.v})">
       <span class="t">${esc(it.time||"—")}${it.end?`<span class="t-end">${esc(it.end)}</span>`:""}</span>
       <span class="card"><span class="ttl">${esc(it.title)}</span>
         <span class="meta"><span class="chip">${c.label}</span>${ov.has(it.id)?`<span class="chip warn-chip">⚠️ 時間重疊</span>`:""}${cost?`<span class="num">${money(cost)}${Number(it.actual)>0?" 實付":""}</span>`:""}${open?`<span class="cmt-badge">${open} 則留言</span>`:""}</span>
         ${it.note?`<span class="note" style="display:block">${esc(it.note)}</span>`:""}
         ${it.addr&&!isUrl(it.addr)?`<span class="note" style="display:block">📍 ${esc(it.addr)}</span>`:""}
-      </span></button>`;
+        ${S.canWrite!==false?`<button class="item-del" type="button" data-delitem="${esc(it.id)}" aria-label="刪除「${esc(it.title)}」"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg><span class="del-q">刪除？</span></button>`:""}
+      </span></div>`;
   }
   if(S.day===n-1 && t.flightBack && !S.items.some(x=>x.flightItem)) html+=infoCard("回程航班",t.flightBack);
   if(legPairs(S.day).length && S.canWrite!==false) html+=`<div class="row-actions" style="justify-content:flex-end"><button class="link" type="button" data-relegs>${legPending[S.day]?"計算交通中…":"重新計算這天的交通"}</button></div>`;
+  if(DRAGGING){ dragRenderPending=true; return; }   // 拖曳中先不要重畫，放開後再更新
   $("timeline").innerHTML=html;
 }
+/* ---------- 行程卡片：快速刪除（按兩次）＋長按拖曳調整順序 ---------- */
+let dragJustEnded=false, DRAGGING=false, dragRenderPending=false;
+async function quickDelete(btn){
+  const id=btn.dataset.delitem, it=S.items.find(x=>x.id===id); if(!it) return;
+  if(!btn.classList.contains("armed")){ document.querySelectorAll(".item-del.armed").forEach(b=>b.classList.remove("armed")); btn.classList.add("armed"); setTimeout(()=>btn.classList.remove("armed"),3000); return; }
+  const {id:_x,...body}=it;
+  if(await guard(()=>del("items",id))){ scheduleLegs(it.day); toastUndo(`已刪除「${it.title}」`,async()=>{ if(await guard(()=>put("items",id,body))){ toast("已復原"); scheduleLegs(it.day); } }); }
+}
+async function reorderDay(day,ids){
+  // 依新的順序重新分配時間：沿用原本的開始時間格子，每個行程保留自己的長度，前後至少留 15 分鐘
+  const mov=ids.map(id=>S.items.find(x=>x.id===id)).filter(Boolean);
+  const slots=mov.map(x=>toMin(x.time)).sort((a,b)=>a-b);
+  const before=mov.map(x=>({id:x.id,time:x.time,end:x.end||""}));
+  let prevEnd=-1; const plan=[];
+  mov.forEach((x,k)=>{ const dur=x.end&&x.time?Math.max(0,toMin(x.end)-toMin(x.time)):0; let st=slots[k]; if(prevEnd>=0&&st<prevEnd+15) st=prevEnd+15; st=Math.min(st,1439); plan.push({x,time:fromMin(st),end:dur?addMin(fromMin(st),dur):""}); prevEnd=st+(dur||30); });
+  const changed=plan.filter(p=>p.time!==p.x.time||p.end!==(p.x.end||""));
+  if(!changed.length) return;
+  const ok=await guard(async()=>{ for(const p of changed){ const {id,...r}=p.x; await put("items",id,{...r,time:p.time,end:p.end}); } });
+  if(ok){ scheduleLegs(day); toastUndo("已調整順序和時間",async()=>{ await guard(async()=>{ for(const b of before){ const it=S.items.find(x=>x.id===b.id); if(!it) continue; const {id,...r}=it; await put("items",id,{...r,time:b.time,end:b.end}); } }); scheduleLegs(day); toast("已復原原本的順序"); }); }
+}
+(function setupDrag(){
+  const tl=document.getElementById("timeline"); if(!tl) return;
+  let pend=null, drag=null;
+  const cards=()=>[...tl.querySelectorAll("[data-drag]")];
+  const cancelPend=()=>{ if(pend){ clearTimeout(pend.timer); pend=null; } };
+  tl.addEventListener("pointerdown",e=>{
+    if(S.canWrite===false||drag) return;
+    const card=e.target.closest("[data-drag]"); if(!card||e.target.closest("[data-delitem]")) return;
+    if(e.pointerType==="mouse"&&e.button!==0) return;
+    pend={x:e.clientX,y:e.clientY,card,timer:setTimeout(()=>begin(card,pend.y),450)};
+  });
+  function begin(card,y){
+    pend=null; const list=cards(); if(list.length<2){ toast("這天只有一個可以移動的行程"); return; }
+    const r=card.getBoundingClientRect();
+    drag={card,id:card.dataset.drag,list,startY:y,offset:y-r.top,target:list.indexOf(card),line:document.createElement("div")};
+    DRAGGING=true; drag.line.className="drop-line"; card.classList.add("dragging"); document.body.classList.add("is-dragging");
+    try{ navigator.vibrate?.(15); }catch{}
+    move(y);
+  }
+  function move(y){
+    const d=drag; d.card.style.transform=`translateY(${y-d.startY}px)`;
+    const others=d.list.filter(c=>c!==d.card); let idx=others.length;
+    for(let k=0;k<others.length;k++){ const r=others[k].getBoundingClientRect(); if(y<r.top+r.height/2){ idx=k; break; } }
+    d.target=idx; const ref=others[idx];
+    if(ref) ref.before(d.line); else others[others.length-1].after(d.line);
+    if(y<90) window.scrollBy(0,-12); else if(y>innerHeight-150) window.scrollBy(0,12);
+  }
+  async function end(commit){
+    const d=drag; drag=null; if(!d) return; DRAGGING=false;
+    d.card.classList.remove("dragging"); d.card.style.transform=""; d.line.remove(); document.body.classList.remove("is-dragging");
+    dragJustEnded=true; setTimeout(()=>{ dragJustEnded=false; },400);
+    const redraw=()=>{ if(dragRenderPending){ dragRenderPending=false; renderPlan(); } };
+    if(!commit){ redraw(); return; }
+    const ids=d.list.map(c=>c.dataset.drag).filter(id=>id!==d.id); ids.splice(d.target,0,d.id);
+    if(ids.join()===d.list.map(c=>c.dataset.drag).join()){ redraw(); return; }
+    await reorderDay(S.day,ids); redraw();
+  }
+  document.addEventListener("pointermove",e=>{ if(drag){ e.preventDefault(); move(e.clientY); return; } if(pend&&Math.hypot(e.clientX-pend.x,e.clientY-pend.y)>10) cancelPend(); },{passive:false});
+  document.addEventListener("pointerup",()=>{ cancelPend(); if(drag) end(true); });
+  document.addEventListener("pointercancel",()=>{ cancelPend(); if(drag) end(false); });
+  document.addEventListener("touchmove",e=>{ if(drag) e.preventDefault(); },{passive:false});
+  tl.addEventListener("contextmenu",e=>{ if(e.target.closest("[data-drag]")) e.preventDefault(); });
+  document.addEventListener("keydown",e=>{ const it=e.target.closest?.("[data-item]"); if(it&&(e.key==="Enter"||e.key===" ")&&e.target===it){ e.preventDefault(); itemSheet(it.dataset.item); } });
+})();
 const infoCard=(k,v)=>`<div class="item" style="--cat:var(--c-move)"><span class="t">✈</span><span class="card" style="background:var(--sunk)"><span class="sub">${k}</span><span class="ttl" style="display:block">${esc(v)}</span></span></div>`;
 
 function renderBudget(){
@@ -2248,8 +2317,10 @@ function settingsSheet(){
 
 /* ---------- events ---------- */
 document.addEventListener("click",async e=>{
+  if(dragJustEnded){ dragJustEnded=false; e.preventDefault(); e.stopPropagation(); return; }
   const T=s=>e.target.closest(s);
   let el;
+  if((el=T("[data-delitem]"))){ quickDelete(el); return; }
   if((el=T("[data-go]"))){ S.tab=el.dataset.go; document.querySelectorAll("[data-go]").forEach(b=>b.setAttribute("aria-selected",b===el)); document.querySelectorAll("section[data-tab]").forEach(s=>s.hidden=s.dataset.tab!==S.tab); render(); window.scrollTo(0,0); return; }
   if((el=T("[data-day]"))){ S.day=Number(el.dataset.day); renderPlan(); renderDayMap(); return; }
   if((el=T("[data-item]"))){ itemSheet(el.dataset.item); return; }

@@ -467,3 +467,17 @@ details.copy-box:not([open]){padding-block:12px}
 .map-n,.map-pin span{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:12px;font-weight:700;flex:0 0 auto}
 .map-pin{background:none;border:0}.map-pin span{width:26px;height:26px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
 .leaflet-container{font:inherit}
+/* 行程卡片：刪除鈕、長按拖曳 */
+.item{cursor:pointer;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.item .card{position:relative;padding-right:46px}
+.item-del{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;gap:4px;min-width:34px;height:34px;justify-content:center;border:0;border-radius:10px;background:transparent;color:var(--muted);padding:0 6px}
+.item-del svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.item-del .del-q{display:none;font-size:13px;font-weight:700}
+.item-del.armed{background:var(--bad-soft);color:var(--bad)}.item-del.armed .del-q{display:inline}
+.item.dragging{position:relative;z-index:20;transition:none}
+.item.dragging .t{visibility:hidden}
+.item.dragging .card{box-shadow:0 8px 24px rgba(0,0,0,.22);outline:2px solid var(--accent)}
+body.is-dragging{overflow:hidden;touch-action:none}
+.drop-line{height:3px;border-radius:2px;background:var(--accent);margin:4px 0 4px 62px}
+.toast{display:flex;align-items:center;gap:12px}.toast[hidden]{display:none}
+.toast-btn{background:none;border:0;color:var(--lantern);font-weight:700;padding:2px 4px;font-size:14px}
