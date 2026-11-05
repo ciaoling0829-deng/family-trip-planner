@@ -1625,7 +1625,7 @@ async function evToWish(tag){
 }
 
 /* ---------- 匯率換算 ---------- */
-const FX_CURS=[["TWD","新台幣"],["JPY","日圓"],["KRW","韓元"],["USD","美元"],["EUR","歐元"],["HKD","港幣"],["CNY","人民幣"],["THB","泰銖"],["SGD","新加坡幣"],["VND","越南盾"],["MYR","馬幣"],["PHP","菲律賓披索"],["GBP","英鎊"],["AUD","澳幣"],["MOP","澳門幣"]];
+const FX_CURS=[["TWD","新台幣"],["JPY","日圓"],["KRW","韓元"],["USD","美元"],["EUR","歐元"],["HKD","港幣"],["CNY","人民幣"],["THB","泰銖"],["SGD","新加坡幣"],["VND","越南盾"],["MYR","馬幣"],["PHP","菲律賓披索"],["GBP","英鎊"],["AUD","澳幣"],["MOP","澳門幣"],["INR","印度盧比"]];
 const FX_URL="https://open.er-api.com/v6/latest/USD";
 let FX=(()=>{ try{ return JSON.parse(localStorage.getItem("fxRates")||"null"); }catch{ return null; } })();
 let fxLoading=false, fxErr="";
@@ -1642,7 +1642,7 @@ async function loadFx(force){
 const fxRate=(from,to)=>{ if(from===to) return 1; const r=FX?.rates; return r?.[from]&&r?.[to]?r[to]/r[from]:null; };
 const curName=c=>(FX_CURS.find(x=>x[0]===c)||[c,c])[1];
 function guessCur(dest){ const d=String(dest||"");
-  for(const [re,c] of [[/日本|東京|大阪|京都|北海道|札幌|沖繩|福岡|名古屋|仙台|奈良|神戶|箱根|金澤|函館|新潟|迪士尼/,"JPY"],[/韓國|首爾|釜山|濟州/,"KRW"],[/泰國|曼谷|清邁|普吉/,"THB"],[/香港/,"HKD"],[/澳門/,"MOP"],[/新加坡/,"SGD"],[/越南|峴港|胡志明|河內/,"VND"],[/馬來西亞|吉隆坡|沙巴/,"MYR"],[/菲律賓|宿霧|長灘/,"PHP"],[/中國|上海|北京|廈門/,"CNY"],[/英國|倫敦/,"GBP"],[/澳洲|雪梨|墨爾本/,"AUD"],[/美國|紐約|洛杉磯|夏威夷|關島/,"USD"],[/法國|巴黎|德國|義大利|西班牙|荷蘭|奧地利|歐洲/,"EUR"],[/台灣|台北|台中|台南|高雄|花蓮|台東|澎湖|金門|墾丁/,"TWD"]]) if(re.test(d)) return c;
+  for(const [re,c] of [[/日本|東京|大阪|京都|北海道|札幌|沖繩|福岡|名古屋|仙台|奈良|神戶|箱根|金澤|函館|新潟|迪士尼/,"JPY"],[/韓國|首爾|釜山|濟州/,"KRW"],[/泰國|曼谷|清邁|普吉/,"THB"],[/香港/,"HKD"],[/澳門/,"MOP"],[/新加坡/,"SGD"],[/越南|峴港|胡志明|河內/,"VND"],[/馬來西亞|吉隆坡|沙巴/,"MYR"],[/菲律賓|宿霧|長灘/,"PHP"],[/中國|上海|北京|廈門/,"CNY"],[/印度|新德里|德里|孟買|齋浦爾|阿格拉|泰姬瑪哈陵|班加羅爾|加爾各答|果亞|瓦拉納西/,"INR"],[/英國|倫敦/,"GBP"],[/澳洲|雪梨|墨爾本/,"AUD"],[/美國|紐約|洛杉磯|夏威夷|關島/,"USD"],[/法國|巴黎|德國|義大利|西班牙|荷蘭|奧地利|歐洲/,"EUR"],[/台灣|台北|台中|台南|高雄|花蓮|台東|澎湖|金門|墾丁/,"TWD"]]) if(re.test(d)) return c;
   return "USD"; }
 const homeCur=()=>S.trip?.currency||"TWD";
 const tripCur=()=>{ const k="cur_"+(S.tripId||""); return store.get(k)||guessCur(S.trip?.destination||S.trip?.title); };
@@ -1669,7 +1669,7 @@ function renderFx(){
   $("fxFrom").innerHTML=curOpts(fxState.from); $("fxTo").innerHTML=curOpts(fxState.to);
   const n=Number(String(fxState.amt).replace(/[,\s]/g,"")), r=fxRate(fxState.from,fxState.to);
   $("fxOut").textContent=!isFinite(n)?"—":r?fmtCur(n*r,fxState.to):"—";
-  const q=fxState.from==="JPY"||fxState.from==="KRW"||fxState.from==="VND"?(fxState.from==="JPY"?[100,500,1000,3000,5000,10000]:fxState.from==="KRW"?[1000,5000,10000,50000]:[50000,100000,500000]):[10,50,100,500,1000];
+  const q=fxState.from==="JPY"||fxState.from==="KRW"||fxState.from==="VND"?(fxState.from==="JPY"?[100,500,1000,3000,5000,10000]:fxState.from==="KRW"?[1000,5000,10000,50000]:[50000,100000,500000]):fxState.from==="INR"||fxState.from==="THB"||fxState.from==="PHP"?[100,500,1000,2000,5000]:[10,50,100,500,1000];
   $("fxQuick").innerHTML=q.map(v=>`<button type="button" data-fxq="${v}">${v.toLocaleString()}</button>`).join("");
   const upd=FX?.upd||FX?.at;
   $("fxInfo").innerHTML=`${r&&fxState.from!==fxState.to?`1 ${fxState.from} = ${(+r.toPrecision(4)).toLocaleString()} ${fxState.to}・`:""}${fxLoading?"更新匯率中…":upd?`匯率更新於 ${stamp(upd)}`:""}${fxErr?`<span class="msg">${esc(fxErr)}</span>`:""}　<button class="link" type="button" data-fxreload>重新整理</button><br><span class="est">參考匯率，實際以銀行或店家為準。資料來源：<a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">ExchangeRate-API</a></span>`;
