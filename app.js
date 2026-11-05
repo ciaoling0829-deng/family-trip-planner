@@ -561,7 +561,9 @@ function itemSheet(id,pre){
   const n=S.trip?.days||1; let dayOpts=""; for(let i=0;i<n;i++) dayOpts+=`<option value="${i}" ${i===it.day?"selected":""}>Day ${i+1}　${dLabel(dayDate(i))}</option>`;
   const catOpts=Object.entries(CATS).map(([k,c])=>`<option value="${k}" ${k===it.cat?"selected":""}>${c.label}</option>`).join("");
   const cmts=id?S.comments.filter(c=>c.itemId===id).sort((a,b)=>a.at-b.at):[];
+  const pickList=!id&&!pre&&S.canWrite!==false?wishOpen().sort((a,b)=>(prioOf(a)==="must"?0:1)-(prioOf(b)==="must"?0:1)||a.at-b.at):[];
   openSheet(`<h2>${id?"編輯行程":pre?"排進行程":"新增行程"}</h2>
+  ${pickList.length?`<div class="wish-pick"><div class="sub" style="margin-bottom:6px">♡ 從想去清單選（${pickList.length}）</div><div class="tags" id="wpList">${pickList.map(w=>`<button type="button" data-pickwish="${esc(w.id)}" aria-pressed="false">${prioOf(w)==="must"?"⭐ ":""}${esc(w.name)}</button>`).join("")}</div><p class="sub" id="wpHint" style="margin:6px 0 0">點一下會自動帶入名稱、地址、分類和備註，也會找這天的空檔。</p></div>`:""}
   <form class="form" id="itemForm">
     <label>名稱<input id="f_title" required value="${esc(it.title)}" placeholder="例如：參觀博物館"></label>
     <label>地址或 Google 地圖連結<input id="f_addr" value="${esc(it.addr||"")}" placeholder="貼上地址，或 Google 地圖的「分享」連結"></label>
@@ -612,6 +614,24 @@ function itemSheet(id,pre){
       if(ok){ closeSheet(); toast(allDays?`已複製到其他 ${days.length} 天`:`已複製到 Day ${days[0]+1}${s?" "+s:""}`); if(!allDays){ S.day=days[0]; render(); } days.forEach(d=>scheduleLegs(d)); }
       else $("c_go").disabled=false;
     };
+  }
+  if(pickList.length){ let autoTime=false;
+    const suggest=()=>{ const w=pickList.find(x=>x.id===it.wishId); if(!w) return; const d=Number($("f_day").value);
+      if($("f_time").value&&!autoTime) return;
+      const pref=/晚餐|晚上|夜景|宵夜/.test(w.note||"")?"18:00":/午餐|中午/.test(w.note||"")?"12:00":/早上|上午|早餐/.test(w.note||"")?"10:00":"";
+      const f=makeSlots([{key:0,w:{...w,prio:"must"},r:{day:d+1,time:pref,duration:""}}])[0];
+      if(f?.day===d+1){ $("f_time").value=f.time; $("f_end").value=addMin(f.time,f.len||DEF_DUR[w.cat]||60); autoTime=true; $("wpHint").textContent=`已選「${w.name}」，找到 Day ${d+1} 的空檔 ${f.time}。儲存後會從想去清單移到行程。`; }
+      else { if(autoTime){ $("f_time").value=""; $("f_end").value=""; } autoTime=false; $("wpHint").textContent=`已選「${w.name}」。Day ${d+1} 已經排滿或沒有空檔，請自己填時間，或換一天。`; } };
+    document.querySelectorAll("[data-pickwish]").forEach(b=>b.onclick=()=>{
+      const w=pickList.find(x=>x.id===b.dataset.pickwish); if(!w) return;
+      const on=b.getAttribute("aria-pressed")!=="true";
+      document.querySelectorAll("[data-pickwish]").forEach(o=>o.setAttribute("aria-pressed",String(on&&o===b)));
+      if(!on){ delete it.wishId; $("wpHint").textContent="點一下會自動帶入名稱、地址、分類和備註，也會找這天的空檔。"; return; }
+      it.wishId=w.id; $("f_title").value=w.name; $("f_addr").value=w.addr||""; if(CATS[w.cat]) $("f_cat").value=w.cat; $("f_note").value=w.note||"";
+      const fl=$("f_find"); if(fl) fl.href=mapsSearch({title:w.name,addr:w.addr||""});
+      suggest(); });
+    $("f_day").addEventListener("change",suggest);
+    $("f_time").addEventListener("input",()=>{ autoTime=false; });
   }
   $("itemForm").onsubmit=async e=>{ e.preventDefault();
     const body={addr:$("f_addr").value.trim(),...(it.wishId?{wishId:it.wishId}:{}),...(it.leg?{leg:it.leg}:{}),day:Number($("f_day").value),time:$("f_time").value,end:$("f_end").value,title:$("f_title").value.trim(),cat:$("f_cat").value,est:Number($("f_est").value)||0,actual:Number($("f_act").value)||0,note:$("f_note").value.trim(),...(it.fareItem?{fareItem:true}:{}),...(it.flightItem?{flightItem:true,fareId:it.fareId||""}:{}),...stampBy()};
