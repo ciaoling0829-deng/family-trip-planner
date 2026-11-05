@@ -1636,14 +1636,16 @@ function renderLedger(){
         <p class="sub" id="l_conv"></p>
         <div class="sheet-actions"><button class="primary" type="submit">記一筆</button></div>
       </form>
-      <div id="ledgerList"></div>`;
+      <div id="ledgerList"></div>
+      <div class="led-drive"><div class="row-actions"><button class="ghost sm" type="button" data-leddrive>☁️ 存到雲端硬碟</button><label class="shop-check"><input type="checkbox" id="l_auto" ${ledAuto()?"checked":""}> 記帳後自動存</label></div><p class="sub" id="ledDriveMsg"></p></div>`;
+    $("l_auto").onchange=e=>{ store.set("ledgerAutoDrive",e.target.checked?"1":"0"); if(e.target.checked) queueLedgerDrive(); };
     $("l_date").value=defaultDate();
     $("l_amt").addEventListener("input",ledConv); $("l_cur").onchange=e=>{ if(e.target.value!==homeCur()) store.set("cur_"+(S.tripId||""),e.target.value); ledConv(); };
     $("ledF").onsubmit=async e=>{ e.preventDefault();
       const amount=Number($("l_amt").value.replace(/[,\s]/g,"")); if(!(amount>0)){ $("l_amt").focus(); return; }
       const cur=$("l_cur").value, rate=fxRate(cur,homeCur());
       const body={tripId:S.tripId,amount,cur,home:homeCur(),rate:rate??null,cat:lState.cat,pay:lState.pay,note:$("l_note").value.trim(),date:$("l_date").value||todayIso(),at:Date.now()};
-      try{ await addDoc(myCol(),body); $("l_amt").value=""; $("l_note").value=""; ledConv(); toast(`已記下 ${fmtCur(amount,cur)}`); }
+      try{ await addDoc(myCol(),body); $("l_amt").value=""; $("l_note").value=""; ledConv(); toast(`已記下 ${fmtCur(amount,cur)}`); queueLedgerDrive(); }
       catch(err){ console.warn(err); toast(err?.code==="permission-denied"?"個人記帳還沒開通，請更新 Firestore 規則":"沒有存到，請再試一次"); }
     };
   }
@@ -1680,8 +1682,36 @@ function mineSheet(id){
   document.querySelectorAll("[data-mcat]").forEach(b=>b.onclick=()=>{ cat=b.dataset.mcat; document.querySelectorAll("[data-mcat]").forEach(o=>o.setAttribute("aria-pressed",o===b)); });
   document.querySelectorAll("[data-mpay]").forEach(b=>b.onclick=()=>{ pay=b.dataset.mpay; document.querySelectorAll("[data-mpay]").forEach(o=>o.setAttribute("aria-pressed",o===b)); });
   $("mineF").onsubmit=async e=>{ e.preventDefault(); const amount=Number($("m_amt").value.replace(/[,\s]/g,"")); if(!(amount>0)) return; const cur=$("m_cur").value;
-    const {id:_i,...rest}=x; try{ await setDoc(doc(myCol(),id),{...rest,amount,cur,rate:fxRate(cur,homeCur())??(cur===x.cur?x.rate:null),home:homeCur(),cat,pay,note:$("m_note").value.trim(),date:$("m_date").value||x.date}); closeSheet(); toast("已儲存"); }catch(err){ console.warn(err); toast("沒有存到，請再試一次"); } };
-  const d=$("m_del"); let armed=false; d.onclick=async()=>{ if(!armed){ armed=true; d.textContent="再按一次確認刪除"; return; } try{ await deleteDoc(doc(myCol(),id)); closeSheet(); toast("已刪除"); }catch(err){ toast("刪除失敗"); } };
+    const {id:_i,...rest}=x; try{ await setDoc(doc(myCol(),id),{...rest,amount,cur,rate:fxRate(cur,homeCur())??(cur===x.cur?x.rate:null),home:homeCur(),cat,pay,note:$("m_note").value.trim(),date:$("m_date").value||x.date}); closeSheet(); toast("已儲存"); queueLedgerDrive(); }catch(err){ console.warn(err); toast("沒有存到，請再試一次"); } };
+  const d=$("m_del"); let armed=false; d.onclick=async()=>{ if(!armed){ armed=true; d.textContent="再按一次確認刪除"; return; } try{ await deleteDoc(doc(myCol(),id)); closeSheet(); toast("已刪除"); queueLedgerDrive(); }catch(err){ toast("刪除失敗"); } };
+}
+/* 個人記帳存到雲端硬碟：旅行資料夾／你的名字／旅行名稱_名字_記帳.csv（每次覆蓋成最新一份） */
+const ledAuto=()=>store.get("ledgerAutoDrive")!=="0";
+const myName=()=>safeName(S.users?.[S.user?.uid]?.nick||S.user?.displayName||"我").slice(0,30);
+let ledTimer=null, ledLast="";
+function queueLedgerDrive(){ if(!ledAuto()) return; clearTimeout(ledTimer); ledTimer=setTimeout(()=>ledgerToDrive(false),4000); }
+function ledgerCsv(){
+  const home=homeCur(), rows=[...myRows()].sort((a,b)=>(a.date||"").localeCompare(b.date||"")||a.at-b.at);
+  const q=v=>{ const t=String(v??""); return /[",\n]/.test(t)?`"${t.replace(/"/g,'""')}"`:t; };
+  const dayOf=d=>{ if(!S.trip?.startDate||!d) return ""; const i=Math.round((new Date(d+"T00:00:00")-dayDate(0))/864e5); return i>=0&&i<(S.trip.days||1)?`Day ${i+1}`:""; };
+  const lines=[["日期","第幾天","分類","內容","付款方式","金額","幣別",`約合 ${home}`].join(",")];
+  rows.forEach(x=>{ const h=inHome(x); lines.push([x.date,dayOf(x.date),(LCATS[x.cat]||LCATS.other).split(" ")[1],x.note||"",x.pay||"",x.amount,x.cur,h==null?"":Math.round(h)].map(q).join(",")); });
+  const tot=rows.reduce((s,x)=>s+(inHome(x)||0),0);
+  lines.push(""); lines.push(["合計","","","","","","",Math.round(tot)].map(q).join(","));
+  Object.entries(LCATS).forEach(([k,n])=>{ const v=rows.filter(x=>x.cat===k).reduce((s,x)=>s+(inHome(x)||0),0); if(v) lines.push(["",n.split(" ")[1],"","","","","",Math.round(v)].map(q).join(",")); });
+  lines.push(""); lines.push(q(`匯出時間 ${new Date().toLocaleString("zh-TW")}・匯率僅供參考`));
+  return "\ufeff"+lines.join("\r\n");
+}
+async function ledgerToDrive(manual){
+  const m=$("ledDriveMsg"); if(!S.trip) return;
+  if(!AI_PROXY_URL||DRIVE.state==="notset"){ if(manual) toast("雲端硬碟還沒設定好，請到「輸出」按「測試連線」。"); if(m) m.textContent="雲端硬碟還沒設定好。"; return; }
+  if(!myRows().length&&!manual) return;
+  const name=myName(), csv=ledgerCsv();
+  if(!manual&&csv.replace(/匯出時間.*$/,"")===ledLast) return;
+  if(m) m.textContent="存到雲端硬碟中…";
+  const j=await driveSave({sub:name,filename:`${safeName(S.trip.title)}_${name}_記帳.csv`,mimeType:"text/csv",blob:new Blob([csv],{type:"text/csv"}),replace:true});
+  if(j){ ledLast=csv.replace(/匯出時間.*$/,""); if(m) m.innerHTML=`已存到雲端硬碟「${esc(S.trip.title)}／${esc(name)}」資料夾・${stamp(Date.now())}${j.folderUrl?`　<a class="link" href="${esc(j.folderUrl)}" target="_blank" rel="noopener noreferrer">打開資料夾 ↗</a>`:""}`; if(manual) toast(`記帳已存到雲端硬碟「${name}」資料夾`); }
+  else if(m) m.textContent=DRIVE.msg||"沒有存成功，請稍後再試。";
 }
 function setLedgerKey(k){ LEDGER_KEY=k; store.set("ledgerKey",k); startLedger(); }
 
@@ -1942,6 +1972,7 @@ document.addEventListener("click",async e=>{
   if((el=T("[data-fxq]"))){ fxState.amt=el.dataset.fxq; const a=$("fxAmt"); if(a) a.value=fxState.amt; renderFx(); return; }
   if(T("[data-fxreload]")){ loadFx(true); return; }
   if((el=T("[data-mine]"))){ mineSheet(el.dataset.mine); return; }
+  if(T("[data-leddrive]")){ ledgerToDrive(true); return; }
   if(T("[data-docs]")){ docsSheet(); return; }
   if((el=T("[data-doc]"))){ docView(el.dataset.doc); return; }
   if(T("[data-docsback]")){ docsSheet(); return; }

@@ -430,3 +430,4 @@ details.copy-box:not([open]){padding-block:12px}
 .doc-card img,.doc-card .vid-ph{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;min-height:0}
 .doc-l{font-size:13px;overflow-wrap:anywhere;padding:0 2px 2px}
 .doc-view img{max-height:70vh;object-fit:contain;background:#fff}
+.led-drive{margin-top:14px;border-top:1px dashed var(--line);padding-top:10px}.led-drive .sub{margin:6px 0 0}
