@@ -482,3 +482,5 @@ body.is-dragging{overflow:hidden;touch-action:none}
 .toast{display:flex;align-items:center;gap:12px}.toast[hidden]{display:none}
 .toast-btn{background:none;border:0;color:var(--lantern);font-weight:700;padding:2px 4px;font-size:14px}
 .wish-name{background:none;border:0;padding:0;font-size:16px;font-weight:700;text-align:left;color:inherit;overflow-wrap:anywhere}
+.wish-pick{background:var(--sunk);border-radius:12px;padding:10px 12px;margin-bottom:12px}
+.wish-pick .tags{max-height:132px;overflow-y:auto}
