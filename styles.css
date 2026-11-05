@@ -452,3 +452,18 @@ details.copy-box:not([open]){padding-block:12px}
 .use-item{margin:8px 0}.use-item .bar{margin-top:4px}
 #aiUsage code{font-size:12px;overflow-wrap:anywhere}
 .ov-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+/* 住宿安排 */
+.stay-row{display:grid;gap:6px;border:1px solid var(--line);border-radius:12px;padding:10px}
+.stay-h{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}.stay-h .shop-check{margin-left:auto}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+/* 當日路線圖 */
+#dayMapBox{margin:14px 0 90px}
+.day-map h3{margin:0}
+.map-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.map-canvas{width:100%;aspect-ratio:4/3;max-width:100%;border-radius:12px;overflow:hidden;background:var(--sunk);z-index:0}
+.map-list{list-style:none;margin:10px 0 4px;padding:0;display:grid;gap:4px;font-size:14px}
+.map-list li{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;min-width:0}
+.map-t{flex:1;min-width:0;overflow-wrap:anywhere}
+.map-n,.map-pin span{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:12px;font-weight:700;flex:0 0 auto}
+.map-pin{background:none;border:0}.map-pin span{width:26px;height:26px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.leaflet-container{font:inherit}

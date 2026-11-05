@@ -226,7 +226,7 @@ function render(){
   $("hDates").textContent = t ? `${t.destination||""}${t.startDate?`　${dLabel(dayDate(0))} – ${dLabel(dayDate((t.days||1)-1))}`:""}・${t.travelers||1} 人` : "";
   $("btnTrips").hidden = S.trips.length<1;
   if(t && S.day >= (t.days||1)) S.day=0;
-  renderPlan(); renderBudget(); renderTalk(); renderJournal();
+  renderPlan(); renderDayMap(); renderBudget(); renderTalk(); renderJournal();
   if(t&&S.synced&&!pruneTried.has(S.tripId)){ pruneTried.add(S.tripId); const id=S.tripId; setTimeout(()=>{ if(S.tripId===id) autoPrune(); },3000); }
   $("fab").hidden = S.tab!=="plan" || !t;
   $("ideaCount").hidden=!S.ideas.length; $("ideaCount").textContent=S.ideas.length;
@@ -251,7 +251,7 @@ function renderPlan(){
   let html="";
   if(S.day===0 && t.flightOut && !S.items.some(x=>x.flightItem)) html+=infoCard("去程航班",t.flightOut);
   if(!list.length) html+=`<div class="empty">這一天還沒有安排。按右下角「＋ 新增行程」，或按上方「推薦這天的餐廳和景點」。</div>`;
-  const ov=new Set(); { const tl=list.filter(x=>x.time&&x.end); for(const A of tl) for(const B of list) if(B!==A&&B.time&&toMin(B.time)>=toMin(A.time)&&toMin(B.time)<toMin(A.end)){ ov.add(A.id); ov.add(B.id); } }
+  const ov=new Set(); { const anch=x=>x.autoStay&&(x.stayRole==="depart"||x.stayRole==="return"); const tl=list.filter(x=>x.time&&x.end&&!anch(x)); for(const A of tl) for(const B of list) if(B!==A&&!anch(B)&&B.time&&toMin(B.time)>=toMin(A.time)&&toMin(B.time)<toMin(A.end)){ ov.add(A.id); ov.add(B.id); } }
   if(ov.size&&S.canWrite!==false){ const mv=list.filter(x=>ov.has(x.id)&&x.wishId).length; html+=`<div class="alert warn ov-bar"><span>⚠️ 這天有 ${ov.size} 個行程時間重疊</span>${mv?`<button class="primary sm" type="button" data-fixov="${S.day}">自動調整時間</button>`:`<span class="sub">點開行程改時間</span>`}</div>`; }
   let prevIt=null;
   for(const it of list){
@@ -935,7 +935,7 @@ const DEF_DUR={food:75,tour:90,shop:60,ticket:120,other:60};
 const MEALS=[[690,810],[1050,1200]];   // 午餐 11:30–13:30、晚餐 17:30–20:00 開始
 const isPoint = x => x.cat!=="move" && x.cat!=="stay";
 function busyOf(day,skip){
-  return S.items.filter(x=>x.day===day&&x.time&&!(skip&&skip.has(x.id))).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b]; });
+  return S.items.filter(x=>x.day===day&&x.time&&!(skip&&skip.has(x.id))&&!(x.autoStay&&(x.stayRole==="depart"||x.stayRole==="return"))).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b]; });
 }
 function makeSlots(entries,{skip}={}){
   // entries: [{key, w, r}]；回傳每個 key 的 {day(1 起), time, moved, note}
@@ -943,7 +943,9 @@ function makeSlots(entries,{skip}={}){
   const busy=Array.from({length:n},(_,i)=>busyOf(i,skip));
   const count=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&isPoint(x)&&!(skip&&skip.has(x.id))).length);
   // 整天的行程（例如主題樂園）會佔滿出門時間
-  const free=(d,a,len)=>a>=rule.start-30&&a+len<=Math.max(rule.end,a<1050?rule.end:1290)&&busy[d].every(([x,y])=>a+len+rule.gap<=x||a>=y+rule.gap);
+  const anchors=Array.from({length:n},(_,i)=>{ const its=S.items.filter(x=>x.day===i&&x.autoStay); const dep=its.find(x=>x.stayRole==="depart"), ret=its.find(x=>x.stayRole==="return"); return {from:dep?toMin(dep.end||dep.time):null,to:ret?toMin(ret.time):null}; });
+  const free=(d,a,len)=>{ const A=anchors[d]; const lo=A.from!=null?Math.max(A.from,rule.start-30):rule.start-30; const hi=A.to!=null?A.to-15:Math.max(rule.end,a<1050?rule.end:1290);
+    return a>=lo&&a+len<=hi&&busy[d].every(([x,y])=>a+len+rule.gap<=x||a>=y+rule.gap); };
   const tryDay=(d,pref,len,cat)=>{
     const wins=cat==="food"?(pref!=null&&pref>=MEALS[1][0]-60?[MEALS[1],MEALS[0]]:[MEALS[0],MEALS[1]]):[[rule.start,rule.end-len]];
     for(const [ws,we] of wins){
@@ -1629,6 +1631,131 @@ async function syncPhotosToDrive(day,files,big){
 }
 
 
+/* ---------- 住宿安排：每晚住哪裡，自動放到每天的開頭和結尾 ---------- */
+const STAY_TBD="未決定住宿";
+const stayName = i => (dp(i).hotel||"").trim();
+function staySheet(){
+  const t=S.trip; if(!t) return; const n=t.days||1, nights=Math.max(1,n-1), st=t.stayTimes||{};
+  const names=[...new Set(Array.from({length:n},(_,i)=>stayName(i)).filter(x=>x&&x!==STAY_TBD))];
+  let rows="";
+  for(let i=0;i<nights;i++){ const p=dp(i), tbd=!p.hotel||p.hotel===STAY_TBD;
+    rows+=`<div class="stay-row" data-night="${i}"><div class="stay-h"><b>第 ${i+1} 晚</b><span class="sub">Day ${i+1}${dayDate(i)?`・${dLabel(dayDate(i))}`:""}</span><label class="shop-check"><input type="checkbox" id="sy_tbd${i}" ${tbd?"checked":""}> 還沒決定</label></div>
+      <input id="sy_n${i}" list="stayNames" placeholder="住宿名稱，例如：新宿王子飯店" value="${esc(tbd?"":p.hotel||"")}" ${tbd?"disabled":""} maxlength="60">
+      <input id="sy_a${i}" placeholder="地址或 Google 地圖連結（選填，交通和路線圖會更準）" value="${esc(p.hotelAddr||"")}" ${tbd?"disabled":""}></div>`; }
+  openSheet(`<h2>🏨 住宿安排</h2>
+    <p class="sub" style="margin-top:-6px">填好每晚住哪裡，App 會自動在每天的開頭放「從住宿出發」、結尾放「回到住宿」，換飯店那天也會排好退房和入住。還沒訂的就勾「還沒決定」，會先排一個「未決定住宿」。</p>
+    <datalist id="stayNames">${names.map(x=>`<option value="${esc(x)}">`).join("")}</datalist>
+    <form class="form" id="stayF">
+      ${nights>1?`<div class="row-actions"><button class="ghost sm" type="button" id="syAll">把第 1 晚套用到每一晚</button></div>`:""}
+      ${rows}
+      <div class="grid2"><label>入住時間<input type="time" id="sy_ci" value="${esc(st.ci||"15:00")}"></label><label>退房時間<input type="time" id="sy_co" value="${esc(st.co||"10:00")}"></label></div>
+      <p class="sub" style="margin:0">每天出門和回住宿的時間依「行程節奏」：悠閒 10:00 出門、19:00 回住宿；緊湊 08:30 出門、21:00 回住宿。</p>
+      <div class="sheet-actions"><button class="primary" type="submit" id="syGo">儲存並排進每天的行程</button></div>
+    </form>`,"stay");
+  for(let i=0;i<nights;i++){ const cb=$("sy_tbd"+i); cb.onchange=()=>{ $("sy_n"+i).disabled=$("sy_a"+i).disabled=cb.checked; if(!cb.checked) $("sy_n"+i).focus(); }; }
+  const all=$("syAll"); if(all) all.onclick=()=>{ for(let i=1;i<nights;i++){ $("sy_tbd"+i).checked=$("sy_tbd0").checked; $("sy_n"+i).value=$("sy_n0").value; $("sy_a"+i).value=$("sy_a0").value; $("sy_n"+i).disabled=$("sy_a"+i).disabled=$("sy_tbd0").checked; } toast("已套用到每一晚"); };
+  $("stayF").onsubmit=async e=>{ e.preventDefault(); const go=$("syGo"); go.disabled=true; go.textContent="排進行程中…";
+    const nightsData=Array.from({length:nights},(_,i)=>{ const tbd=$("sy_tbd"+i).checked, nm=$("sy_n"+i).value.trim(); return {hotel:tbd||!nm?STAY_TBD:nm,hotelAddr:tbd?"":$("sy_a"+i).value.trim()}; });
+    const times={ci:$("sy_ci").value||"15:00",co:$("sy_co").value||"10:00"};
+    const ok=await applyStays(nightsData,times);
+    if(ok){ closeSheet(); toast("住宿已排進每天的開頭和結尾"); } else { go.disabled=false; go.textContent="儲存並排進每天的行程"; }
+  };
+}
+function stayItems(nightsData,times){
+  const t=S.trip, n=t.days||1, rule=PACE_RULE[paceOf()]||PACE_RULE.relaxed, out=[];
+  const night=i=>i<n-1||n===1?nightsData[Math.min(i,nightsData.length-1)]:null;
+  const label=h=>h.hotel===STAY_TBD?STAY_TBD:h.hotel;
+  const item=(day,time,len,role,h,title,note)=>out.push({day,time,end:addMin(time,len),title,cat:"stay",addr:h.hotelAddr||"",est:0,actual:0,note:note||(h.hotel===STAY_TBD?"還沒訂住宿，訂好後到「住宿安排」更新":""),autoStay:true,stayRole:role});
+  const flights=d=>S.items.filter(x=>x.day===d&&x.flightItem&&x.time);
+  for(let d=0;d<n;d++){
+    const prev=d>0?night(d-1):null, cur=night(d);
+    const same=prev&&cur&&prev.hotel===cur.hotel&&prev.hotel!==STAY_TBD;
+    const start=rule.start, end=rule.end;
+    if(prev&&same) item(d,fromMin(start-15),15,"depart",prev,`🏨 從住宿出發：${label(prev)}`);
+    if(prev&&!same){
+      let co=toMin(times.co||"10:00"); const fl=flights(d).map(x=>toMin(x.time)); if(fl.length) co=Math.min(co,Math.min(...fl)-90);
+      co=Math.max(360,co); item(d,fromMin(co-30),30,"checkout",prev,`🏨 退房：${label(prev)}`,prev.hotel===STAY_TBD?"":"可以先寄放行李");
+    }
+    if(cur&&!same){
+      let ci=toMin(times.ci||"15:00"); if(d===0){ const arr=flights(0).filter(x=>/抵達/.test(x.title)).map(x=>toMin(x.time)); if(arr.length) ci=Math.max(ci,Math.max(...arr)+90); }
+      if(d>0||!flights(0).length) ci=Math.min(ci,end-30);
+      item(d,fromMin(Math.min(ci,1380)),30,"checkin",cur,`🏨 入住：${label(cur)}`,cur.hotel===STAY_TBD?"還沒訂住宿，訂好後到「住宿安排」更新":"先放行李、休息一下");
+    }
+    const lastEnd=out.filter(x=>x.day===d).reduce((m,x)=>Math.max(m,toMin(x.end||x.time)),0);
+    if(cur&&lastEnd<end-30) item(d,fromMin(end),15,"return",cur,`🏨 回到住宿：${label(cur)}`);
+  }
+  return out;
+}
+async function applyStays(nightsData,times){
+  const t=S.trip, n=t.days||1;
+  return guard(async()=>{
+    for(let i=0;i<n;i++){ const h=i<nightsData.length?nightsData[i]:{hotel:"",hotelAddr:""}; const {id:_d,...cur}=dp(i); if((cur.hotel||"")!==h.hotel||(cur.hotelAddr||"")!==h.hotelAddr) await put("dayplans","d"+i,{theme:cur.theme||"",...cur,hotel:h.hotel,hotelAddr:h.hotelAddr,...stampBy()}); }
+    await put("trip",null,{...S.trip,stayTimes:times});
+    for(const x of S.items.filter(x=>x.autoStay)) await del("items",x.id);
+    for(const it of stayItems(nightsData,times)) await put("items",null,{...it,...stampBy()});
+    for(let d=0;d<n;d++) scheduleLegs(d);
+  });
+}
+
+/* ---------- 當日路線圖（OpenStreetMap，地點座標用 Nominatim 查詢並記在這支手機） ---------- */
+const GEO_KEY="geoCache"; let GEO=(()=>{ try{ return JSON.parse(localStorage.getItem(GEO_KEY)||"{}"); }catch{ return {}; } })();
+const saveGeo=()=>{ try{ localStorage.setItem(GEO_KEY,JSON.stringify(GEO)); }catch{} };
+let leafletP=null, mapObj=null, mapSig="", geoBusy=false;
+function loadLeaflet(){
+  if(window.L) return Promise.resolve(window.L);
+  if(leafletP) return leafletP;
+  leafletP=new Promise((ok,no)=>{ const css=document.createElement("link"); css.rel="stylesheet"; css.href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"; document.head.appendChild(css);
+    const s=document.createElement("script"); s.src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"; s.onload=()=>window.L?.map?ok(window.L):(leafletP=null,no(new Error("leaflet"))); s.onerror=()=>{ leafletP=null; no(new Error("leaflet")); }; document.head.appendChild(s); });
+  return leafletP;
+}
+const stopQuery = x => { const a=String(x.addr||"").trim(); if(a&&!isUrl(a)) return a; return `${String(x.title||"").replace(/^[^\p{L}\p{N}]+/u,"").replace(/^(從住宿出發|回到住宿|退房|入住)：/,"").replace(/[（(].*?[)）]/g,"").trim()} ${S.trip?.destination||""}`.trim(); };
+function mapStops(day){
+  return dayList(day).filter(x=>x.time&&!isFlight(x)&&x.title!==STAY_TBD&&!String(x.title).includes(STAY_TBD)).map(x=>({id:x.id,title:x.title,time:x.time,q:stopQuery(x),url:isUrl(x.addr)?x.addr:""}))
+    .filter((s,k,arr)=>k===0||arr[k-1].q!==s.q);   // 連續同一個地點（例如退房後馬上入住同一間）只留一個
+}
+const gmapsDir = stops => { const q=s=>encodeURIComponent(s.q); if(stops.length<2) return stops.length?`https://www.google.com/maps/search/?api=1&query=${q(stops[0])}`:""; const mid=stops.slice(1,-1).slice(0,8).map(q).join("%7C"); return `https://www.google.com/maps/dir/?api=1&origin=${q(stops[0])}&destination=${q(stops[stops.length-1])}${mid?`&waypoints=${mid}`:""}&travelmode=transit`; };
+async function geocode(q){
+  if(GEO[q]!==undefined) return GEO[q];
+  const r=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=zh-TW&q=${encodeURIComponent(q)}`,{headers:{"Accept":"application/json"}});
+  if(!r.ok) throw new Error("geo "+r.status);
+  const j=await r.json(); const v=j?.[0]?{lat:+j[0].lat,lng:+j[0].lon}:null; GEO[q]=v; saveGeo(); return v;
+}
+function renderDayMap(){
+  const box=$("dayMapBox"); if(!box) return;
+  if(!S.trip||S.tab!=="plan"){ box.innerHTML=""; mapSig=""; if(mapObj){ mapObj.remove(); mapObj=null; } return; }
+  const stops=mapStops(S.day), sig=S.tripId+"|"+S.day+"|"+stops.map(s=>s.q+s.time).join(";");
+  if(sig===mapSig) return; mapSig=sig;
+  if(mapObj){ mapObj.remove(); mapObj=null; }
+  if(!stops.length){ box.innerHTML=`<div class="panel day-map"><h3>🗺 Day ${S.day+1} 路線圖</h3><p class="sub" style="margin:0">這天排好有時間的行程後，這裡會顯示路線圖。</p></div>`; return; }
+  const link=gmapsDir(stops);
+  box.innerHTML=`<div class="panel day-map"><div class="map-head"><h3>🗺 Day ${S.day+1} 路線圖</h3>${link?`<a class="link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">用 Google 地圖導航 ↗</a>`:""}</div>
+    <div class="map-canvas" id="mapCanvas" role="img" aria-label="Day ${S.day+1} 的路線圖"></div>
+    <ol class="map-list">${stops.map((s,k)=>`<li><span class="map-n">${k+1}</span><span class="num">${esc(s.time)}</span><span class="map-t">${esc(s.title)}</span><span class="sub" id="geo_${k}"></span></li>`).join("")}</ol>
+    <p class="est" id="mapMsg">地圖上的線是依時間順序連起來的直線，實際交通請按「用 Google 地圖導航」。</p></div>`;
+  drawMap(stops,sig);
+}
+async function drawMap(stops,sig){ try{ await drawMap1(stops,sig); }catch(e){ console.warn("map",e); const m=$("mapMsg"); if(m) m.textContent="地圖暫時無法顯示，下面是今天的順序。"; } }
+async function drawMap1(stops,sig){
+  let L; try{ L=await loadLeaflet(); }catch{ const m=$("mapMsg"); if(m) m.textContent="地圖載入失敗（可能沒有網路），下面是今天的順序。"; const c=$("mapCanvas"); if(c) c.hidden=true; return; }
+  if(sig!==mapSig||!$("mapCanvas")) return;
+  mapObj=L.map("mapCanvas",{zoomControl:true,attributionControl:true,scrollWheelZoom:false}).setView([35.68,139.76],11);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'}).addTo(mapObj);
+  const pts=[]; let line=null, miss=0;
+  for(let k=0;k<stops.length;k++){
+    if(sig!==mapSig) return;
+    let p=null; const cached=GEO[stops[k].q]!==undefined;
+    try{ p=await geocode(stops[k].q); }catch(e){ console.warn(e); }
+    if(sig!==mapSig||!mapObj) return;
+    const g=$("geo_"+k);
+    if(p){ pts.push([p.lat,p.lng]); L.marker([p.lat,p.lng],{icon:L.divIcon({className:"map-pin",html:`<span>${k+1}</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(mapObj).bindPopup(`${k+1}. ${esc(stops[k].time)} ${esc(stops[k].title)}`);
+      if(line) line.remove(); line=L.polyline(pts,{color:"#2F6B55",weight:3,opacity:.8,dashArray:"6 6"}).addTo(mapObj);
+      mapObj.fitBounds(L.latLngBounds(pts).pad(0.25),{maxZoom:15}); }
+    else { miss++; if(g) g.textContent="（找不到位置，補上地址會更準）"; }
+    if(!cached&&k<stops.length-1) await new Promise(r=>setTimeout(r,1100));   // Nominatim 規定每秒最多 1 次
+  }
+  if(!pts.length){ const m=$("mapMsg"); if(m) m.textContent="地圖上找不到這些地點，請在行程裡補上地址或 Google 地圖連結。"; }
+}
+
 /* ---------- AI 使用量（Worker 自己記的次數，Gemini 不提供剩餘額度） ---------- */
 async function loadAiUsage(){
   const el=$("aiUsage"); if(!el) return;
@@ -2087,7 +2214,7 @@ document.addEventListener("click",async e=>{
   const T=s=>e.target.closest(s);
   let el;
   if((el=T("[data-go]"))){ S.tab=el.dataset.go; document.querySelectorAll("[data-go]").forEach(b=>b.setAttribute("aria-selected",b===el)); document.querySelectorAll("section[data-tab]").forEach(s=>s.hidden=s.dataset.tab!==S.tab); render(); window.scrollTo(0,0); return; }
-  if((el=T("[data-day]"))){ S.day=Number(el.dataset.day); renderPlan(); return; }
+  if((el=T("[data-day]"))){ S.day=Number(el.dataset.day); renderPlan(); renderDayMap(); return; }
   if((el=T("[data-item]"))){ itemSheet(el.dataset.item); return; }
   if((el=T("[data-media]"))){ mediaSheet(el.dataset.media); return; }
   if(T("[data-close]")){ closeSheet(); return; }
@@ -2097,6 +2224,7 @@ document.addEventListener("click",async e=>{
   if(T("[data-suggest]")){ suggestSheet(); return; }
   if(T("[data-events]")){ evTab=S.day; eventsSheet(); return; }
   if(T("[data-evrun]")){ runEvents(); return; }
+  if(T("[data-stay]")){ staySheet(); return; }
   if((el=T("[data-fixov]"))){ el.disabled=true; el.textContent="調整中…"; await fixOverlaps(Number(el.dataset.fixov)); return; }
   if((el=T("[data-evtab]"))){ evTab=Number(el.dataset.evtab); renderEvents(); return; }
   if((el=T("[data-evwish]"))){ evToWish(el.dataset.evwish); return; }
