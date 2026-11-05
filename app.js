@@ -922,7 +922,7 @@ async function runWishPlan(auto){
     const seen=new Set(); wp.res=plans.filter(x=>!seen.has(x.i)&&seen.add(x.i)); wp.summary=String(r?.summary||"").slice(0,160);
     // 先確認地點位置（記在這支手機，下次就不用再查），讓附近的地點排在同一天
     wp.step="正在確認每個地點的位置，讓附近的地點排在同一天…"; renderWishes();
-    await geoMany([...list.map(wishQuery),...S.items.filter(x=>x.time).map(stopQuery),...Array.from({length:n},(_,i)=>dp(i).hotelAddr).filter(a=>a&&!isUrl(a))],(k,all)=>{ wp.step=`正在確認地點位置（${k}/${all}），讓附近的地點排在同一天…`; renderWishPlan(); });
+    await geoResolve([...list.map(wishRef),...S.items.filter(x=>x.time&&!isFlight(x)&&!String(x.title).includes(STAY_TBD)).map(stopRef),...Array.from({length:n},(_,i)=>dp(i).hotelAddr&&!isUrl(dp(i).hotelAddr)?{q:dp(i).hotelAddr,name:dp(i).hotel||"",addr:dp(i).hotelAddr}:null)],t=>{ wp.step=t+"讓附近的地點排在同一天"; renderWishPlan(); });
     // 不完全照 AI 的時間：確認不和已排行程或彼此重疊、留交通時間、一天不排太滿，必要時改到空的日子
     const fixed=makeSlots(wp.res.map((x,k)=>({key:k,w:list[x.i],r:x})));
     wp.res=wp.res.map((x,k)=>{ const f=fixed[k]; if(!f) return x; return {...x,aiDay:x.day,aiTime:x.time,day:f.day,time:f.time,duration:x.duration||(f.len?`${f.len}分`:""),why:f.day==null&&f.note?`${x.why?x.why+"；":""}${f.note}`:x.why,moved:f.moved,fixNote:f.note}; });
@@ -1706,7 +1706,7 @@ async function applyStays(nightsData,times){
 }
 
 /* ---------- 當日路線圖（OpenStreetMap，地點座標用 Nominatim 查詢並記在這支手機） ---------- */
-const GEO_KEY="geoCache"; let GEO=(()=>{ try{ return JSON.parse(localStorage.getItem(GEO_KEY)||"{}"); }catch{ return {}; } })();
+const GEO_KEY="geoCache2"; try{ localStorage.removeItem("geoCache"); }catch{} let GEO=(()=>{ try{ return JSON.parse(localStorage.getItem(GEO_KEY)||"{}"); }catch{ return {}; } })();
 const saveGeo=()=>{ try{ localStorage.setItem(GEO_KEY,JSON.stringify(GEO)); }catch{} };
 let leafletP=null, mapObj=null, mapSig="", geoBusy=false;
 function loadLeaflet(){
@@ -1718,22 +1718,48 @@ function loadLeaflet(){
 }
 const stopQuery = x => { const a=String(x.addr||"").trim(); if(a&&!isUrl(a)) return a; return `${String(x.title||"").replace(/^[^\p{L}\p{N}]+/u,"").replace(/^(從住宿出發|回到住宿|退房|入住)：/,"").replace(/[（(].*?[)）]/g,"").trim()} ${S.trip?.destination||""}`.trim(); };
 function mapStops(day){
-  return dayList(day).filter(x=>x.time&&!isFlight(x)&&x.title!==STAY_TBD&&!String(x.title).includes(STAY_TBD)).map(x=>({id:x.id,title:x.title,time:x.time,q:stopQuery(x),url:isUrl(x.addr)?x.addr:""}))
+  return dayList(day).filter(x=>x.time&&!isFlight(x)&&x.title!==STAY_TBD&&!String(x.title).includes(STAY_TBD)).map(x=>({id:x.id,title:x.title,time:x.time,url:isUrl(x.addr)?x.addr:"",...stopRef(x)}))
     .filter((s,k,arr)=>k===0||arr[k-1].q!==s.q);   // 連續同一個地點（例如退房後馬上入住同一間）只留一個
 }
 const gmapsDir = stops => { const q=s=>encodeURIComponent(s.q); if(stops.length<2) return stops.length?`https://www.google.com/maps/search/?api=1&query=${q(stops[0])}`:""; const mid=stops.slice(1,-1).slice(0,8).map(q).join("%7C"); return `https://www.google.com/maps/dir/?api=1&origin=${q(stops[0])}&destination=${q(stops[stops.length-1])}${mid?`&waypoints=${mid}`:""}&travelmode=transit`; };
-async function geocode(q){
-  if(GEO[q]!==undefined) return GEO[q];
-  const r=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=zh-TW&q=${encodeURIComponent(q)}`,{headers:{"Accept":"application/json"}});
-  if(!r.ok) throw new Error("geo "+r.status);
-  const j=await r.json(); const v=j?.[0]?{lat:+j[0].lat,lng:+j[0].lon}:null; GEO[q]=v; saveGeo(); return v;
-}
 const wishQuery = w => { const a=String(w.addr||"").trim(); return a&&!isUrl(a)?a:`${w.name} ${S.trip?.destination||""}`.trim(); };
-async function geoMany(qs,onStep){
-  const todo=[...new Set(qs.filter(Boolean))].filter(q=>GEO[q]===undefined).slice(0,30);
-  for(let k=0;k<todo.length;k++){ onStep&&onStep(k+1,todo.length); try{ await geocode(todo[k]); }catch(e){ console.warn("geo",e); break; } if(k<todo.length-1) await new Promise(r=>setTimeout(r,1100)); }
+const geoGet = q => { const v=q&&GEO[q]; return v&&v.lat!=null?v:null; };
+const geoKnown = q => { const v=GEO[q]; return !!v&&(v.lat!=null||(v.miss&&Date.now()-v.miss<6*3600e3)); };
+async function nominatim(q){
+  const r=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(q)}`,{headers:{"Accept":"application/json"}});
+  if(!r.ok) throw new Error("geo "+r.status);
+  const j=await r.json(); return j?.[0]?{lat:+j[0].lat,lng:+j[0].lon}:null;
 }
-const geoGet = q => q&&GEO[q]?GEO[q]:null;
+const geoName = t => String(t||"").replace(/^[^\p{L}\p{N}]+/u,"").replace(/^(從住宿出發|回到住宿|退房|入住)：/,"").trim();
+const stopRef = x => ({q:stopQuery(x),name:geoName(x.title),addr:isUrl(x.addr)?"":(x.addr||"")});
+const wishRef = w => ({q:wishQuery(w),name:w.name,addr:isUrl(w.addr)?"":(w.addr||"")});
+let geoErr="";
+// 找地點位置：先請 AI 一次給全部的座標和當地語言名稱；AI 沒把握的，再用當地語言名稱查 OpenStreetMap。
+async function geoResolve(refs,onStep){
+  const seen=new Set(); const todo=refs.filter(r=>r&&r.q&&!seen.has(r.q)&&seen.add(r.q)&&!geoKnown(r.q)).slice(0,40);
+  if(!todo.length) return; geoErr="";
+  onStep&&onStep(`正在找 ${todo.length} 個地點的位置…`);
+  const got={};
+  if(AI_PROXY_URL) for(let k=0;k<todo.length;k+=25){ const part=todo.slice(k,k+25);
+    try{ const r=await ai("geo",{destination:S.trip?.destination||S.trip?.title||"",places:part.map((x,i)=>({i,name:x.name.slice(0,60),addr:x.addr.slice(0,100)}))});
+      for(const g of r?.places||[]){ const x=part[Number(g.i)]; if(x) got[x.q]=g; } }
+    catch(e){ console.warn("geo ai",e); geoErr=aiError(e); } }
+  // AI 給的座標要在旅行地附近（和其他地點的中位數相差 300 公里內），避免亂給
+  const ok=v=>v&&v.lat!=null&&v.lng!=null&&Number.isFinite(+v.lat)&&Number.isFinite(+v.lng)&&Math.abs(+v.lat)<=90&&Math.abs(+v.lng)<=180;
+  const sure=Object.values(got).filter(g=>ok(g)&&g.sure!==false);
+  const med=a=>a.sort((x,y)=>x-y)[Math.floor(a.length/2)];
+  const mid=sure.length?{lat:med(sure.map(g=>+g.lat)),lng:med(sure.map(g=>+g.lng))}:null;
+  const near=g=>!mid||km(mid,{lat:+g.lat,lng:+g.lng})<300;
+  const rest=[];
+  for(const x of todo){ const g=got[x.q]; if(ok(g)&&g.sure!==false&&near(g)) GEO[x.q]={lat:+g.lat,lng:+g.lng,src:"ai"}; else rest.push(x); }
+  const lim=Math.min(rest.length,12);
+  for(let k=0;k<lim;k++){ const x=rest[k], g=got[x.q]; onStep&&onStep(`正在查地圖資料（${k+1}/${lim}）…`);
+    let p=null; for(const q of [g?.nameLocal,x.addr,x.q].filter((v,i,a)=>v&&a.indexOf(v)===i)){ try{ p=await nominatim(q); }catch(e){ console.warn(e); } await new Promise(r=>setTimeout(r,1100)); if(p&&near(p)) break; p=null; }
+    if(!p&&ok(g)&&near(g)) p={lat:+g.lat,lng:+g.lng};      // AI 不太確定，但比沒有好
+    GEO[x.q]=p?{...p,src:"osm"}:{miss:Date.now()}; }
+  for(const x of rest.slice(lim)) if(!GEO[x.q]) GEO[x.q]={miss:Date.now()};
+  saveGeo();
+}
 function km(a,b){ const R=6371, r=Math.PI/180, dl=(b.lat-a.lat)*r, dn=(b.lng-a.lng)*r; const h=Math.sin(dl/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dn/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
 function renderDayMap(){
   const box=$("dayMapBox"); if(!box) return;
@@ -1749,27 +1775,23 @@ function renderDayMap(){
     <p class="est" id="mapMsg">地圖上的線是依時間順序連起來的直線，實際交通請按「用 Google 地圖導航」。</p></div>`;
   drawMap(stops,sig);
 }
-async function drawMap(stops,sig){ try{ await drawMap1(stops,sig); }catch(e){ console.warn("map",e); const m=$("mapMsg"); if(m) m.textContent="地圖暫時無法顯示，下面是今天的順序。"; } }
 async function drawMap1(stops,sig){
-  let L; try{ L=await loadLeaflet(); }catch{ const m=$("mapMsg"); if(m) m.textContent="地圖載入失敗（可能沒有網路），下面是今天的順序。"; const c=$("mapCanvas"); if(c) c.hidden=true; return; }
+  const msg=t=>{ const m=$("mapMsg"); if(m) m.textContent=t; };
+  let L; try{ L=await loadLeaflet(); }catch{ msg("地圖程式載入失敗（可能沒有網路），下面是今天的順序。"); const c=$("mapCanvas"); if(c) c.hidden=true; return; }
   if(sig!==mapSig||!$("mapCanvas")) return;
   mapObj=L.map("mapCanvas",{zoomControl:true,attributionControl:true,scrollWheelZoom:false}).setView([35.68,139.76],11);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'}).addTo(mapObj);
-  const pts=[]; let line=null, miss=0;
-  for(let k=0;k<stops.length;k++){
-    if(sig!==mapSig) return;
-    let p=null; const cached=GEO[stops[k].q]!==undefined;
-    try{ p=await geocode(stops[k].q); }catch(e){ console.warn(e); }
-    if(sig!==mapSig||!mapObj) return;
-    const g=$("geo_"+k);
-    if(p){ pts.push([p.lat,p.lng]); L.marker([p.lat,p.lng],{icon:L.divIcon({className:"map-pin",html:`<span>${k+1}</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(mapObj).bindPopup(`${k+1}. ${esc(stops[k].time)} ${esc(stops[k].title)}`);
-      if(line) line.remove(); line=L.polyline(pts,{color:"#2F6B55",weight:3,opacity:.8,dashArray:"6 6"}).addTo(mapObj);
-      mapObj.fitBounds(L.latLngBounds(pts).pad(0.25),{maxZoom:15}); }
-    else { miss++; if(g) g.textContent="（找不到位置，補上地址會更準）"; }
-    if(!cached&&k<stops.length-1) await new Promise(r=>setTimeout(r,1100));   // Nominatim 規定每秒最多 1 次
-  }
-  if(!pts.length){ const m=$("mapMsg"); if(m) m.textContent="地圖上找不到這些地點，請在行程裡補上地址或 Google 地圖連結。"; }
+  await geoResolve(stops,msg);
+  if(sig!==mapSig||!mapObj) return;
+  const pts=[]; let miss=0;
+  stops.forEach((s0,k)=>{ const p=geoGet(s0.q), g=$("geo_"+k);
+    if(p){ pts.push([p.lat,p.lng]); L.marker([p.lat,p.lng],{icon:L.divIcon({className:"map-pin",html:`<span>${k+1}</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(mapObj).bindPopup(`${k+1}. ${esc(s0.time)} ${esc(s0.title)}`); }
+    else { miss++; if(g) g.textContent="（找不到位置，補上地址會更準）"; } });
+  if(pts.length>1) L.polyline(pts,{color:"#2F6B55",weight:3,opacity:.8,dashArray:"6 6"}).addTo(mapObj);
+  if(pts.length) mapObj.fitBounds(L.latLngBounds(pts).pad(0.25),{maxZoom:15});
+  msg(!pts.length?`找不到這些地點的位置${geoErr?`（${geoErr}）`:""}。請在行程裡補上地址，或稍後再打開這天重試。`:miss?`有 ${miss} 個地點找不到位置，補上地址會更準。線是依時間順序連起來的直線，實際交通請按「用 Google 地圖導航」。`:"線是依時間順序連起來的直線，實際交通請按「用 Google 地圖導航」。");
 }
+async function drawMap(stops,sig){ try{ await drawMap1(stops,sig); }catch(e){ console.warn("map",e); const m=$("mapMsg"); if(m) m.textContent="地圖暫時無法顯示，下面是今天的順序。"; } }
 
 /* ---------- AI 使用量（Worker 自己記的次數，Gemini 不提供剩餘額度） ---------- */
 async function loadAiUsage(){
