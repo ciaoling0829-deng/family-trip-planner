@@ -280,8 +280,7 @@ let dragJustEnded=false, DRAGGING=false, dragRenderPending=false;
 async function quickDelete(btn){
   const id=btn.dataset.delitem, it=S.items.find(x=>x.id===id); if(!it) return;
   if(!btn.classList.contains("armed")){ document.querySelectorAll(".item-del.armed").forEach(b=>b.classList.remove("armed")); btn.classList.add("armed"); setTimeout(()=>btn.classList.remove("armed"),3000); return; }
-  const {id:_x,...body}=it;
-  if(await guard(()=>del("items",id))){ scheduleLegs(it.day); toastUndo(`已刪除「${it.title}」`,async()=>{ if(await guard(()=>put("items",id,body))){ toast("已復原"); scheduleLegs(it.day); } }); }
+  if(await guard(()=>del("items",id))){ scheduleLegs(it.day); toast(`已刪除「${it.title}」`); }
 }
 async function reorderDay(day,ids){
   // 依新的順序重新分配時間：沿用原本的開始時間格子，每個行程保留自己的長度，前後至少留 15 分鐘
@@ -928,17 +927,45 @@ function wishesSheet(){
     if(await guard(()=>put("wishes",null,{name,cat:wishCat,prio:wishPrio,addr:$("w_addr").value.trim(),note:$("w_note").value.trim(),...stampBy()}))){ $("w_name").value=""; $("w_addr").value=""; $("w_note").value=""; $("w_name").focus(); toast("已加入想去清單"); }
   };
 }
+function wishEditSheet(id){
+  const w=(S.wishes||[]).find(x=>x.id===id); if(!w) return;
+  let cat=w.cat||"other", prio=prioOf(w); const it=wishItem(w);
+  openSheet(`<h2>編輯想去的地點</h2>
+    <form class="form" id="wishEditF">
+      <label>名稱<input id="we_name" required maxlength="60" value="${esc(w.name||"")}" autocomplete="off"></label>
+      <div><div class="sub" style="margin-bottom:6px">類型</div><div class="tags">${WCATS.map(([k,n])=>`<button type="button" data-wecat="${k}" aria-pressed="${k===cat}">${n}</button>`).join("")}</div></div>
+      <div><div class="sub" style="margin-bottom:6px">有多想去</div><div class="tags">${PRIOS.map(([k,n])=>`<button type="button" data-weprio="${k}" aria-pressed="${k===prio}">${k==="must"?"⭐ ":""}${n}</button>`).join("")}</div></div>
+      <label>地址或 Google 地圖連結<input id="we_addr" value="${esc(w.addr||"")}" placeholder="貼上地址或 Google 地圖的「分享」連結"></label>
+      <label>想什麼時候去、備註<input id="we_note" value="${esc(w.note||"")}" placeholder="例如：想吃晚餐、要預約、下雨備案"></label>
+      ${it?`<p class="sub" style="margin:0">這個地點已經排在 Day ${it.day+1}${it.time?" "+esc(it.time):""}，儲存後行程裡的名稱和地址也會一起更新。</p>`:""}
+      <div class="sheet-actions"><button class="primary" type="submit">儲存</button><button class="ghost" type="button" data-wishback>返回想去清單</button></div>
+    </form>`,"wishedit");
+  document.querySelectorAll("[data-wecat]").forEach(b=>b.onclick=()=>{ cat=b.dataset.wecat; document.querySelectorAll("[data-wecat]").forEach(o=>o.setAttribute("aria-pressed",o===b)); });
+  document.querySelectorAll("[data-weprio]").forEach(b=>b.onclick=()=>{ prio=b.dataset.weprio; document.querySelectorAll("[data-weprio]").forEach(o=>o.setAttribute("aria-pressed",o===b)); });
+  $("wishEditF").onsubmit=async e=>{ e.preventDefault();
+    const name=$("we_name").value.trim(); if(!name){ $("we_name").focus(); return; }
+    const addr=$("we_addr").value.trim(), note=$("we_note").value.trim();
+    const {id:_w,...r}=w;
+    const ok=await guard(async()=>{
+      await put("wishes",id,{...r,name,cat,prio,addr,note});
+      if(it){ const {id:iid,...ir}=it; const patch={...ir}; if(ir.title===w.name) patch.title=name; if((ir.addr||"")===(w.addr||"")) patch.addr=addr; if(CATS[cat]&&ir.cat===w.cat) patch.cat=cat;
+        if(patch.title!==ir.title||patch.addr!==ir.addr||patch.cat!==ir.cat){ await put("items",iid,patch); scheduleLegs(it.day); } }
+    });
+    if(ok){ toast("已儲存"); wishesSheet(); }
+  };
+}
 function wishCard(w){
   const c=CATS[w.cat]||CATS.other; const it=wishItem(w); const ro=S.canWrite===false;
   const map=w.addr&&isUrl(w.addr)?w.addr:`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(((w.addr&&!isUrl(w.addr))?w.addr:w.name)+" "+(S.trip?.destination||""))}`;
   return `<div class="idea" style="--cat:var(${c.v})">
-    <div class="idea-top"><b style="font-size:16px">${esc(w.name)}</b><span class="badges">${prioBadge(w)}<span class="chip">${(WCATS.find(x=>x[0]===w.cat)||WCATS[4])[1]}</span></span></div>
+    <div class="idea-top">${ro?`<b style="font-size:16px">${esc(w.name)}</b>`:`<button class="wish-name" type="button" data-wishedit="${esc(w.id)}" aria-label="編輯「${esc(w.name)}」">${esc(w.name)}</button>`}<span class="badges">${prioBadge(w)}<span class="chip">${(WCATS.find(x=>x[0]===w.cat)||WCATS[4])[1]}</span></span></div>
     ${w.addr&&!isUrl(w.addr)?`<div class="note">📍 ${esc(w.addr)}</div>`:""}
     ${w.note?`<div class="sub">${esc(w.note)}</div>`:""}
     <div class="facts">${it?`<span><b>已排 Day ${it.day+1}${it.time?" "+esc(it.time):""}</b></span>`:""}<span>${esc(nameOf(w.by))} 加的</span></div>
     <div class="row-actions">
       ${it?`<button class="ghost" type="button" data-wishgo="${esc(it.id)}">看這天的行程</button>`:(ro?"":`<button class="ghost" type="button" data-wishmanual="${esc(w.id)}">自己排</button>`)}
       <a class="link" href="${esc(map)}" target="_blank" rel="noopener noreferrer">地圖 ↗</a>
+      ${ro?"":`<button class="link" type="button" data-wishedit="${esc(w.id)}">✏️ 編輯</button>`}
       ${ro||it?"":`<button class="link" type="button" data-wishprio="${esc(w.id)}">${prioOf(w)==="must"?"改成想去":"改成一定要去"}</button><button class="link" type="button" data-wishrm="${esc(w.id)}" style="color:var(--bad)">刪除</button>`}
     </div>
   </div>`;
@@ -2363,6 +2390,8 @@ document.addEventListener("click",async e=>{
   if(e.target.closest("[data-wpclear]")){ wp.res=null; renderWishes(); return; }
   { const a=e.target.closest("[data-wpadd]"); if(a){ a.disabled=true; await addWishPlans([Number(a.dataset.wpadd)]); return; } }
   { const m=e.target.closest("[data-wishmanual]"); if(m){ const w=(S.wishes||[]).find(x=>x.id===m.dataset.wishmanual); if(w) itemSheet(null,{title:w.name,cat:w.cat||"other",addr:w.addr||"",note:w.note||"",wishId:w.id}); return; } }
+  { const we=e.target.closest("[data-wishedit]"); if(we){ wishEditSheet(we.dataset.wishedit); return; } }
+  if(e.target.closest("[data-wishback]")){ wishesSheet(); return; }
   { const r=e.target.closest("[data-wishrm]"); if(r){ await guard(()=>del("wishes",r.dataset.wishrm)); return; } }
   { const g=e.target.closest("[data-wishgo]"); if(g){ const it=S.items.find(x=>x.id===g.dataset.wishgo); if(it){ S.day=it.day; closeSheet(); render(); window.scrollTo(0,0); } return; } }
   { const s=e.target.closest("[data-wishsug]"); if(s){ const r=sug.results[Number(s.dataset.wishsug)]; if(!r) return; if((S.wishes||[]).some(w=>w.name===r.name)){ toast("已經在想去清單裡"); return; } s.disabled=true;
