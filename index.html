@@ -61,6 +61,7 @@
     </div>
     <button class="wish-bar" type="button" data-wishes id="wishBar" hidden></button>
     <button class="wish-bar shop-bar" type="button" data-shop id="shopBar" hidden></button>
+    <button class="wish-bar doc-bar" type="button" data-docs id="docBar" hidden></button>
     <div class="days" id="days" role="group" aria-label="選擇日期"></div>
     <div class="day-head"><h2 id="dayTitle"></h2><span class="num" id="dayCost"></span></div>
     <div id="dayPlan"></div>
@@ -142,7 +143,7 @@
 
 <nav class="tabs" role="tablist">
   <button role="tab" data-go="plan" aria-selected="true" type="button"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>行程</button>
-  <button role="tab" data-go="budget" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M16 15h2"/></svg>預算</button>
+  <button role="tab" data-go="budget" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M16 15h2"/></svg>記帳</button>
   <button role="tab" data-go="talk" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>留言<span class="badge" id="talkBadge" hidden></span></button>
   <button role="tab" data-go="journal" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><path d="M6 3.5h11a1.5 1.5 0 0 1 1.5 1.5v15.5H7A2 2 0 0 1 5 18.5V4.5a1 1 0 0 1 1-1z"/><path d="M5 18.5A2 2 0 0 1 7 16.5h11.5M9 7.5h6M9 11h4"/></svg>日誌</button>
   <button role="tab" data-go="export" aria-selected="false" type="button"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg>輸出</button>

@@ -404,3 +404,29 @@ details.copy-box:not([open]){padding-block:12px}
 .clean-list li{display:flex;align-items:center;gap:10px;justify-content:space-between;border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-width:0}
 .clean-list .shop-check{min-width:0;flex:1}
 .cl-txt{display:grid;min-width:0}.cl-txt b{font-weight:600;overflow-wrap:anywhere}
+/* 記帳：匯率換算、個人記帳 */
+.fx-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,9.5em);gap:8px;align-items:center}
+.fx-row input,.fx-row select{min-width:0;width:100%;box-sizing:border-box}
+#fxAmt{font-family:var(--f-num);font-size:20px}
+.fx-out{display:block;font-size:24px;font-weight:700;padding:6px 2px;overflow-wrap:anywhere;min-width:0}
+.fx-mid{display:flex;justify-content:flex-start;margin:6px 0}
+.fx-info{margin:8px 0 0;line-height:1.6}
+#fxQuick{margin-top:8px}
+.led-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.led-head h3{margin:0}
+#ledgerBox .form{margin-top:10px}
+.led-row2{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.led-row2 .tags{flex:1 1 220px}.led-row2 input[type=date]{flex:0 1 11em;min-width:0}
+.led-day{margin-top:14px}
+.led-dh{display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid var(--line);padding:4px 2px;font-size:14px}
+.led-item{box-sizing:border-box;width:100%;display:flex;align-items:center;gap:10px;background:none;border:0;border-bottom:1px solid var(--line);padding:10px 2px;text-align:left;color:inherit}
+.led-cat{font-size:20px;flex:0 0 auto}
+.led-txt{flex:1;min-width:0;display:grid}.led-txt b{font-weight:600;overflow-wrap:anywhere}
+.led-amt{display:grid;justify-items:end;flex:0 0 auto;max-width:45%}.led-amt b{overflow-wrap:anywhere;text-align:right}
+#famBudget summary{list-style:none}
+/* 重要文件 */
+.doc-bar .wb-ico{color:var(--c-stay)}
+.doc-h{margin:16px 0 8px;font-size:15px}
+.doc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,130px),1fr));gap:10px}
+.doc-card{display:grid;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px;text-align:left;color:inherit;min-width:0}
+.doc-card img,.doc-card .vid-ph{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;min-height:0}
+.doc-l{font-size:13px;overflow-wrap:anywhere;padding:0 2px 2px}
+.doc-view img{max-height:70vh;object-fit:contain;background:#fff}

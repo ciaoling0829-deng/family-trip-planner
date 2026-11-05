@@ -23,7 +23,7 @@ const LIKES = ["溫泉","美食","購物","自然風景","親子","文化古蹟"
 const ORIGINS = [["TPE","桃園"],["RMQ","台中"],["KHH","高雄"],["TSA","松山"]];
 const AIRPORTS = ["TPE 桃園","RMQ 台中","KHH 高雄","TSA 松山","NRT 東京成田","HND 東京羽田","KIX 大阪關西","NGO 名古屋","FUK 福岡","CTS 札幌新千歲","OKA 沖繩那霸","SDJ 仙台","KIJ 新潟","HKD 函館","ICN 首爾仁川","PUS 釜山","CJU 濟州","BKK 曼谷","CNX 清邁","SGN 胡志明市","DAD 峴港","SIN 新加坡","HKG 香港","MFM 澳門","HUN 花蓮","TTT 台東","MZG 澎湖","KNH 金門"];
 const WD = ["日","一","二","三","四","五","六"];
-const SUBS = ["items","comments","packing","journal","media","snapshots","fares","dayplans","wishes","entries","shopping"];
+const SUBS = ["items","comments","packing","journal","media","snapshots","fares","dayplans","wishes","entries","shopping","docs"];
 
 /* ---------- firebase ---------- */
 const configured = !String(FIREBASE_CONFIG.apiKey).includes("請填入");
@@ -80,7 +80,7 @@ async function guard(fn){
 let unsubTrip = [];
 function subscribeTrip(id){
   unsubTrip.forEach(u=>u()); unsubTrip=[];
-  S.tripId=id; S.trip=null; S.items=[]; S.comments=[]; S.packing=[]; S.journal={}; S.dayplans={}; S.wishes=[]; S.entries=[]; S.shopping=[]; S.media=[]; S.snaps=[]; S.fares=[]; S.day=0;
+  S.tripId=id; S.trip=null; S.items=[]; S.comments=[]; S.packing=[]; S.journal={}; S.dayplans={}; S.wishes=[]; S.entries=[]; S.shopping=[]; S.docs=[]; S.media=[]; S.snaps=[]; S.fares=[]; S.day=0;
   if(!id){ render(); return; }
   store.set("lastTrip",id);
   const err = e => { console.warn(e); setSync(false,"同步中斷，請重新整理"); };
@@ -175,6 +175,7 @@ function bootAuth(){
     catch(e){
       if(e?.code==="permission-denied"){ await signOut(auth); showGate("",`${user.email} 還沒有被加入家人名單。請請建立者把這個 Email 加進 Firebase 規則。`); return; }
     }
+    startLedger();
     let askedWho=false;
     onSnapshot(collection(db,"users"),s=>{ S.users=Object.fromEntries(s.docs.map(d=>[d.id,d.data()])); render(); if(LINK_MODE&&!askedWho&&!S.users[user.uid]?.nick&&!s.metadata?.fromCache){ askedWho=true; setTimeout(()=>{ if($("sheet").hidden) whoSheet(); },400); } });
     onSnapshot(collection(db,"ideas"),s=>{ S.ideas=s.docs.map(d=>({id:d.id,...d.data()})); render(); refreshOpenSheet("ideas"); });
@@ -230,7 +231,7 @@ function render(){
   $("fab").hidden = S.tab!=="plan" || !t;
   $("ideaCount").hidden=!S.ideas.length; $("ideaCount").textContent=S.ideas.length;
   $("fareCount").hidden=!S.fares.length; $("fareCount").textContent=S.fares.length;
-  renderWishBar(); renderShopBar(); renderSaveBtn(); renderDrivePanel();
+  renderWishBar(); renderShopBar(); renderDocBar(); renderSaveBtn(); renderDrivePanel();
 }
 function renderPlan(){
   const t=S.trip;
@@ -272,7 +273,10 @@ const infoCard=(k,v)=>`<div class="item" style="--cat:var(--c-move)"><span class
 
 function renderBudget(){
   const el=$("tabBudget"), t=S.trip;
-  if(!t){ el.innerHTML=`<div class="empty">先建立旅行並填入總預算。</div>`; return; }
+  if(!t){ el.innerHTML=`<div class="empty">先建立旅行。</div>`; delete el.dataset.trip; return; }
+  if(el.dataset.trip!==S.tripId){ el.dataset.trip=S.tripId; fxState.from=null; el.innerHTML=`<div class="panel" id="fxBox"></div><div class="panel" id="ledgerBox"></div><details class="panel fold" id="famBudget"><summary><h3 style="margin:0">👪 全家預算 <span class="sub">大家都看得到</span></h3></summary><div class="fold-body" id="budgetBox"></div></details>`; loadFx(); }
+  renderFx(); renderLedger();
+  const bx=$("budgetBox");
   const budget=Number(t.budget)||0, est=S.items.reduce((s,x)=>s+(Number(x.est)||0),0), act=S.items.reduce((s,x)=>s+(Number(x.actual)||0),0), plan=S.items.reduce((s,x)=>s+costOf(x),0);
   const pct=budget?plan/budget:0, cls=pct>1?"bad":pct>=.9?"warn":"";
   let alerts="";
@@ -281,7 +285,7 @@ function renderBudget(){
   const byCat={}; for(const x of S.items){ const c=costOf(x); if(c) byCat[x.cat]=(byCat[x.cat]||0)+c; }
   const max=Math.max(1,...Object.values(byCat));
   const rows=Object.entries(CATS).filter(([k])=>byCat[k]).sort((a,b)=>byCat[b[0]]-byCat[a[0]]).map(([k,c])=>`<div class="cat-row" style="--cat:var(${c.v})"><span class="chip">${c.label}</span><span class="sub">${plan?Math.round(byCat[k]/plan*100):0}%</span><span class="num">${money(byCat[k])}</span><span class="mini"><i style="width:${byCat[k]/max*100}%"></i></span></div>`).join("");
-  el.innerHTML=`${alerts}
+  bx.innerHTML=`${alerts}
   <div class="panel"><h3>總預算</h3>
     <div class="big"><span class="num">${money(plan)}</span><span class="sub">/ ${budget?money(budget):"尚未設定"}</span></div>
     <div class="bar"><i class="${cls}" style="width:${Math.min(100,pct*100)}%"></i></div>
@@ -1428,6 +1432,7 @@ function refreshOpenSheet(kind){
   if(kind==="route"){ renderRoute(); return; }
   if(kind==="wishes"){ renderWishes(); return; }
   if(kind==="shopping"){ renderShopping(); return; }
+  if(kind==="docs"){ renderDocs(); return; }
   if(kind==="trips"){ const el=$("tripList"); if(!el) return; el.innerHTML=S.trips.length?S.trips.map(t=>`<button class="trip-row" type="button" data-pick="${esc(t.id)}" aria-current="${t.id===S.tripId}"><span><b>${esc(t.title||"未命名")}</b><span class="sub">${esc(t.destination||"")}${t.startDate?"・"+esc(t.startDate):""}</span></span><span aria-hidden="true">›</span></button>`).join(""):`<p class="sub">還沒有旅行。</p>`; }
   if(kind==="ideas"){ const el=$("ideaList"); if(!el) return; const list=[...S.ideas].sort((a,b)=>((b.likes||[]).length-(a.likes||[]).length)||(b.at-a.at)); el.innerHTML=list.length?list.map(ideaCard).join(""):`<p class="sub" style="margin:0">還沒有候選地。輸入想去的地方並按「加入候選」，家人就能一起投票。</p>`; }
   if(kind==="fares"){ const el=$("fareList"); if(!el) return; const list=[...S.fares].sort((a,b)=>a.price-b.price); const min=list[0]?.price;
@@ -1546,6 +1551,191 @@ async function syncPhotosToDrive(day,files,big){
   let n=0, url="";
   for(const f of files){ const j=await driveSave({sub:folderName(day),filename:f.name,mimeType:f.type,blob:f}); if(!j) break; n++; url=j.folderUrl||url; }
   if(n){ toast(`${n} 個檔案也同步到雲端硬碟「${folderName(day)}」了${big?`（${big} 個超過 30 MB 沒有同步）`:""}`); if(url&&!S.journal["d"+day]?.driveUrl) saveJournal(day,{driveUrl:url}); }
+}
+
+
+/* ---------- 匯率換算 ---------- */
+const FX_CURS=[["TWD","新台幣"],["JPY","日圓"],["KRW","韓元"],["USD","美元"],["EUR","歐元"],["HKD","港幣"],["CNY","人民幣"],["THB","泰銖"],["SGD","新加坡幣"],["VND","越南盾"],["MYR","馬幣"],["PHP","菲律賓披索"],["GBP","英鎊"],["AUD","澳幣"],["MOP","澳門幣"]];
+const FX_URL="https://open.er-api.com/v6/latest/USD";
+let FX=(()=>{ try{ return JSON.parse(localStorage.getItem("fxRates")||"null"); }catch{ return null; } })();
+let fxLoading=false, fxErr="";
+async function loadFx(force){
+  if(fxLoading) return; if(!force&&FX?.rates&&Date.now()-FX.at<6*3600e3) return;
+  fxLoading=true; fxErr=""; renderFx();
+  try{
+    const r=await fetch(FX_URL,{cache:"no-store"}); const j=await r.json();
+    if(j?.result!=="success"||!j.rates?.TWD) throw new Error("bad");
+    FX={at:Date.now(),upd:(j.time_last_update_unix||0)*1000,rates:j.rates}; try{ localStorage.setItem("fxRates",JSON.stringify(FX)); }catch{}
+  }catch(e){ console.warn("fx",e); fxErr=FX?.rates?"現在連不到匯率資料，先用上次的匯率。":"連不到匯率資料，請連上網路後再試。"; }
+  fxLoading=false; renderFx(); renderLedger();
+}
+const fxRate=(from,to)=>{ if(from===to) return 1; const r=FX?.rates; return r?.[from]&&r?.[to]?r[to]/r[from]:null; };
+const curName=c=>(FX_CURS.find(x=>x[0]===c)||[c,c])[1];
+function guessCur(dest){ const d=String(dest||"");
+  for(const [re,c] of [[/日本|東京|大阪|京都|北海道|札幌|沖繩|福岡|名古屋|仙台|奈良|神戶|箱根|金澤|函館|新潟|迪士尼/,"JPY"],[/韓國|首爾|釜山|濟州/,"KRW"],[/泰國|曼谷|清邁|普吉/,"THB"],[/香港/,"HKD"],[/澳門/,"MOP"],[/新加坡/,"SGD"],[/越南|峴港|胡志明|河內/,"VND"],[/馬來西亞|吉隆坡|沙巴/,"MYR"],[/菲律賓|宿霧|長灘/,"PHP"],[/中國|上海|北京|廈門/,"CNY"],[/英國|倫敦/,"GBP"],[/澳洲|雪梨|墨爾本/,"AUD"],[/美國|紐約|洛杉磯|夏威夷|關島/,"USD"],[/法國|巴黎|德國|義大利|西班牙|荷蘭|奧地利|歐洲/,"EUR"],[/台灣|台北|台中|台南|高雄|花蓮|台東|澎湖|金門|墾丁/,"TWD"]]) if(re.test(d)) return c;
+  return "USD"; }
+const homeCur=()=>S.trip?.currency||"TWD";
+const tripCur=()=>{ const k="cur_"+(S.tripId||""); return store.get(k)||guessCur(S.trip?.destination||S.trip?.title); };
+const fmtCur=(n,c,dp)=>{ if(c==="TWD") return (n<0?"-":"")+"NT$"+Math.abs(n||0).toLocaleString("zh-TW",{maximumFractionDigits:dp??(Math.abs(n)<100?2:0)}); try{ return new Intl.NumberFormat("zh-TW",{style:"currency",currency:c,maximumFractionDigits:dp??(Math.abs(n)<100&&c!=="JPY"&&c!=="KRW"&&c!=="VND"?2:0)}).format(n||0); }catch{ return c+" "+(Math.round((n||0)*100)/100).toLocaleString(); } };
+const curOpts=sel=>FX_CURS.map(([c,n])=>`<option value="${c}" ${c===sel?"selected":""}>${c} ${n}</option>`).join("");
+const fxState={amt:"1000",from:null,to:null};
+function renderFx(){
+  const box=$("fxBox"); if(!box) return;
+  if(!box.dataset.built){
+    box.dataset.built="1";
+    box.innerHTML=`<h3>💱 匯率換算</h3>
+      <div class="fx-row"><input id="fxAmt" inputmode="decimal" autocomplete="off" aria-label="金額"><select id="fxFrom" aria-label="從哪個幣別"></select></div>
+      <div class="fx-mid"><button class="ghost sm" type="button" id="fxSwap" aria-label="交換幣別">⇅ 交換</button></div>
+      <div class="fx-row"><output id="fxOut" class="fx-out num"></output><select id="fxTo" aria-label="換成哪個幣別"></select></div>
+      <div class="quick" id="fxQuick"></div>
+      <p class="sub fx-info" id="fxInfo"></p>`;
+    $("fxAmt").addEventListener("input",e=>{ fxState.amt=e.target.value; renderFx(); });
+    $("fxFrom").onchange=e=>{ fxState.from=e.target.value; if(fxState.from!==homeCur()) store.set("cur_"+(S.tripId||""),fxState.from); renderFx(); };
+    $("fxTo").onchange=e=>{ fxState.to=e.target.value; renderFx(); };
+    $("fxSwap").onclick=()=>{ const f=fxState.from; fxState.from=fxState.to; fxState.to=f; renderFx(); };
+  }
+  if(!fxState.from){ fxState.from=tripCur(); fxState.to=homeCur(); if(fxState.from===fxState.to) fxState.to=fxState.from==="TWD"?"JPY":"TWD"; }
+  const a=$("fxAmt"); if(document.activeElement!==a) a.value=fxState.amt;
+  $("fxFrom").innerHTML=curOpts(fxState.from); $("fxTo").innerHTML=curOpts(fxState.to);
+  const n=Number(String(fxState.amt).replace(/[,\s]/g,"")), r=fxRate(fxState.from,fxState.to);
+  $("fxOut").textContent=!isFinite(n)?"—":r?fmtCur(n*r,fxState.to):"—";
+  const q=fxState.from==="JPY"||fxState.from==="KRW"||fxState.from==="VND"?(fxState.from==="JPY"?[100,500,1000,3000,5000,10000]:fxState.from==="KRW"?[1000,5000,10000,50000]:[50000,100000,500000]):[10,50,100,500,1000];
+  $("fxQuick").innerHTML=q.map(v=>`<button type="button" data-fxq="${v}">${v.toLocaleString()}</button>`).join("");
+  const upd=FX?.upd||FX?.at;
+  $("fxInfo").innerHTML=`${r&&fxState.from!==fxState.to?`1 ${fxState.from} = ${(+r.toPrecision(4)).toLocaleString()} ${fxState.to}・`:""}${fxLoading?"更新匯率中…":upd?`匯率更新於 ${stamp(upd)}`:""}${fxErr?`<span class="msg">${esc(fxErr)}</span>`:""}　<button class="link" type="button" data-fxreload>重新整理</button><br><span class="est">參考匯率，實際以銀行或店家為準。資料來源：<a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">ExchangeRate-API</a></span>`;
+}
+
+/* ---------- 我的記帳（只有自己看得到） ---------- */
+// 存在 private/{帳本代碼}/expenses。帳本代碼只存在這支手機，家人不知道代碼就讀不到。
+const LCATS={food:"🍜 餐飲",move:"🚃 交通",shop:"🛍 購物",ticket:"🎟 門票",stay:"🏨 住宿",other:"📌 其他"};
+const PAYS=["現金","信用卡","電子支付","交通卡"];
+let LEDGER_KEY=store.get("ledgerKey")||""; let unsubLedger=null; S.mine=[];
+const ensureLedgerKey=()=>{ if(!LEDGER_KEY){ LEDGER_KEY=newFamilyKey(); store.set("ledgerKey",LEDGER_KEY); } return LEDGER_KEY; };
+const myCol=()=>collection(db,"private",ensureLedgerKey(),"expenses");
+function startLedger(){
+  if(unsubLedger) unsubLedger(); S.mine=[];
+  unsubLedger=onSnapshot(myCol(),s=>{ S.mine=s.docs.map(d=>({id:d.id,...d.data()})); renderLedger(); refreshOpenSheet("mine"); },e=>{ console.warn("ledger",e); const m=$("ledgerMsg"); if(m) m.textContent=e?.code==="permission-denied"?"個人記帳還沒開通：請把 README 裡新的 Firestore 規則貼到 Firebase 並發布。":"個人記帳暫時無法同步。"; });
+}
+const myRows=()=>S.mine.filter(x=>x.tripId===S.tripId);
+const inHome=x=>{ if(x.cur===homeCur()) return x.amount; const r=fxRate(x.cur,homeCur())??(x.home===homeCur()?x.rate:null); return r==null?null:x.amount*r; };
+const lState={cat:"food",pay:"現金"};
+const todayIso=()=>{ const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10); };
+function defaultDate(){ const t=S.trip; const now=todayIso(); if(!t?.startDate) return now; const s=iso(dayDate(0)), e=iso(dayDate((t.days||1)-1)); return now<s||now>e?(now<s?s:e):now; }
+function renderLedger(){
+  const box=$("ledgerBox"); if(!box||!S.trip) return;
+  if(!box.dataset.built){
+    box.dataset.built="1";
+    box.innerHTML=`<div class="led-head"><h3>🔒 我的記帳</h3><span class="sub">只有你看得到</span></div>
+      <p class="msg" id="ledgerMsg"></p>
+      <div id="ledgerSum"></div>
+      <form class="form" id="ledF" autocomplete="off">
+        <div class="fx-row"><input id="l_amt" inputmode="decimal" placeholder="金額" required aria-label="金額"><select id="l_cur" aria-label="幣別"></select></div>
+        <div class="tags" id="l_cats">${Object.entries(LCATS).map(([k,n])=>`<button type="button" data-lcat="${k}" aria-pressed="${k===lState.cat}">${n}</button>`).join("")}</div>
+        <input id="l_note" placeholder="買了什麼（選填），例如：一蘭拉麵、Suica 加值" maxlength="60">
+        <div class="led-row2"><div class="tags" id="l_pays">${PAYS.map(p=>`<button type="button" data-lpay="${p}" aria-pressed="${p===lState.pay}">${p}</button>`).join("")}</div><input type="date" id="l_date" aria-label="日期"></div>
+        <p class="sub" id="l_conv"></p>
+        <div class="sheet-actions"><button class="primary" type="submit">記一筆</button></div>
+      </form>
+      <div id="ledgerList"></div>`;
+    $("l_date").value=defaultDate();
+    $("l_amt").addEventListener("input",ledConv); $("l_cur").onchange=e=>{ if(e.target.value!==homeCur()) store.set("cur_"+(S.tripId||""),e.target.value); ledConv(); };
+    $("ledF").onsubmit=async e=>{ e.preventDefault();
+      const amount=Number($("l_amt").value.replace(/[,\s]/g,"")); if(!(amount>0)){ $("l_amt").focus(); return; }
+      const cur=$("l_cur").value, rate=fxRate(cur,homeCur());
+      const body={tripId:S.tripId,amount,cur,home:homeCur(),rate:rate??null,cat:lState.cat,pay:lState.pay,note:$("l_note").value.trim(),date:$("l_date").value||todayIso(),at:Date.now()};
+      try{ await addDoc(myCol(),body); $("l_amt").value=""; $("l_note").value=""; ledConv(); toast(`已記下 ${fmtCur(amount,cur)}`); }
+      catch(err){ console.warn(err); toast(err?.code==="permission-denied"?"個人記帳還沒開通，請更新 Firestore 規則":"沒有存到，請再試一次"); }
+    };
+  }
+  const c=$("l_cur"); const want=c.value||tripCur(); c.innerHTML=curOpts(want);
+  ledConv();
+  const rows=myRows(), home=homeCur();
+  const tot=rows.reduce((s,x)=>s+(inHome(x)||0),0), unknown=rows.filter(x=>inHome(x)==null).length;
+  const today=todayIso(), tToday=rows.filter(x=>x.date===today).reduce((s,x)=>s+(inHome(x)||0),0);
+  const byCat={}; rows.forEach(x=>byCat[x.cat]=(byCat[x.cat]||0)+(inHome(x)||0)); const mx=Math.max(1,...Object.values(byCat));
+  const byPay={}; rows.forEach(x=>byPay[x.pay]=(byPay[x.pay]||0)+(inHome(x)||0));
+  const byCur={}; rows.forEach(x=>byCur[x.cur]=(byCur[x.cur]||0)+x.amount);
+  $("ledgerSum").innerHTML=rows.length?`<div class="per"><div><span class="sub">我總共花了</span><span class="num">${fmtCur(tot,home,0)}</span></div><div><span class="sub">今天</span><span class="num">${fmtCur(tToday,home,0)}</span></div></div>
+    <p class="sub" style="margin:6px 0">${Object.entries(byCur).map(([k,v])=>fmtCur(v,k)).join("＋")}${unknown?`・${unknown} 筆還沒有匯率`:""}</p>
+    <div class="cats">${Object.entries(LCATS).filter(([k])=>byCat[k]).sort((a,b)=>byCat[b[0]]-byCat[a[0]]).map(([k,n])=>`<div class="cat-row"><span class="chip">${n}</span><span class="sub">${tot?Math.round(byCat[k]/tot*100):0}%</span><span class="num">${fmtCur(byCat[k],home,0)}</span><span class="mini"><i style="width:${byCat[k]/mx*100}%"></i></span></div>`).join("")}</div>
+    <p class="sub" style="margin:8px 0 0">${Object.entries(byPay).map(([k,v])=>`${k} ${fmtCur(v,home,0)}`).join("・")}</p>`:`<p class="sub" style="margin:0 0 8px">還沒有記帳。輸入金額、選分類，按「記一筆」就好。這裡的記錄只存在你的帳本，家人看不到。</p>`;
+  const days=[...new Set(rows.map(x=>x.date))].sort().reverse();
+  $("ledgerList").innerHTML=days.map(d=>{ const list=rows.filter(x=>x.date===d).sort((a,b)=>b.at-a.at); const sum=list.reduce((s,x)=>s+(inHome(x)||0),0); const di=S.trip?.startDate?Math.round((new Date(d+"T00:00:00")-dayDate(0))/864e5):-1;
+    return `<div class="led-day"><div class="led-dh"><b>${dLabel(new Date(d+"T00:00:00"))}${di>=0&&di<(S.trip.days||1)?`・Day ${di+1}`:""}</b><span class="num">${fmtCur(sum,home,0)}</span></div>
+      ${list.map(x=>`<button class="led-item" type="button" data-mine="${esc(x.id)}"><span class="led-cat">${(LCATS[x.cat]||LCATS.other).split(" ")[0]}</span><span class="led-txt"><b>${esc(x.note||(LCATS[x.cat]||"").split(" ")[1]||"花費")}</b><span class="sub">${esc(x.pay||"")}</span></span><span class="led-amt"><b class="num">${fmtCur(x.amount,x.cur)}</b>${x.cur!==home&&inHome(x)!=null?`<span class="sub num">≈ ${fmtCur(inHome(x),home,0)}</span>`:""}</span></button>`).join("")}</div>`; }).join("");
+}
+function ledConv(){ const el=$("l_conv"); if(!el) return; const n=Number(($("l_amt")?.value||"").replace(/[,\s]/g,"")), cur=$("l_cur")?.value, r=fxRate(cur,homeCur()); el.textContent=n>0&&cur!==homeCur()?(r?`≈ ${fmtCur(n*r,homeCur(),0)}`:"還沒有匯率，連上網路後會自動換算"):""; }
+function mineSheet(id){
+  const x=S.mine.find(m=>m.id===id); if(!x) return;
+  let cat=x.cat, pay=x.pay;
+  openSheet(`<h2>修改這筆記帳</h2>
+    <form class="form" id="mineF">
+      <div class="fx-row"><input id="m_amt" inputmode="decimal" value="${esc(String(x.amount))}" required aria-label="金額"><select id="m_cur">${curOpts(x.cur)}</select></div>
+      <div class="tags">${Object.entries(LCATS).map(([k,n])=>`<button type="button" data-mcat="${k}" aria-pressed="${k===cat}">${n}</button>`).join("")}</div>
+      <label>買了什麼<input id="m_note" value="${esc(x.note||"")}" maxlength="60"></label>
+      <div class="tags">${PAYS.map(p=>`<button type="button" data-mpay="${p}" aria-pressed="${p===pay}">${p}</button>`).join("")}</div>
+      <label>日期<input type="date" id="m_date" value="${esc(x.date||"")}"></label>
+      <div class="sheet-actions"><button class="primary" type="submit">儲存</button><button class="danger" type="button" id="m_del">刪除</button></div>
+    </form>`,"mine");
+  document.querySelectorAll("[data-mcat]").forEach(b=>b.onclick=()=>{ cat=b.dataset.mcat; document.querySelectorAll("[data-mcat]").forEach(o=>o.setAttribute("aria-pressed",o===b)); });
+  document.querySelectorAll("[data-mpay]").forEach(b=>b.onclick=()=>{ pay=b.dataset.mpay; document.querySelectorAll("[data-mpay]").forEach(o=>o.setAttribute("aria-pressed",o===b)); });
+  $("mineF").onsubmit=async e=>{ e.preventDefault(); const amount=Number($("m_amt").value.replace(/[,\s]/g,"")); if(!(amount>0)) return; const cur=$("m_cur").value;
+    const {id:_i,...rest}=x; try{ await setDoc(doc(myCol(),id),{...rest,amount,cur,rate:fxRate(cur,homeCur())??(cur===x.cur?x.rate:null),home:homeCur(),cat,pay,note:$("m_note").value.trim(),date:$("m_date").value||x.date}); closeSheet(); toast("已儲存"); }catch(err){ console.warn(err); toast("沒有存到，請再試一次"); } };
+  const d=$("m_del"); let armed=false; d.onclick=async()=>{ if(!armed){ armed=true; d.textContent="再按一次確認刪除"; return; } try{ await deleteDoc(doc(myCol(),id)); closeSheet(); toast("已刪除"); }catch(err){ toast("刪除失敗"); } };
+}
+function setLedgerKey(k){ LEDGER_KEY=k; store.set("ledgerKey",k); startLedger(); }
+
+/* ---------- 重要文件（機票、訂房、門票 QR code） ---------- */
+const DKINDS={flight:"✈️ 機票",stay:"🏨 住宿",ticket:"🎟 門票",move:"🚃 交通",ins:"🛡 保險",other:"📄 其他"};
+function renderDocBar(){
+  const b=$("docBar"); if(!b) return; b.hidden=!S.trip;
+  const n=(S.docs||[]).length;
+  b.innerHTML=`<span class="wb-ico" aria-hidden="true">📁</span><span class="wb-text"><b>重要文件</b><span class="sub">${n?`${n} 份：${[...new Set(S.docs.map(d=>(DKINDS[d.kind]||DKINDS.other).split(" ")[1]))].join("、")}`:"機票、訂房確認、門票 QR code 放這裡，出國時一鍵打開"}</span></span>${n?`<span class="wb-n">${n}</span>`:""}`;
+}
+let docKind="flight";
+function docsSheet(){
+  const ro=S.canWrite===false;
+  openSheet(`<h2>重要文件</h2>
+    <p class="sub" style="margin-top:-6px">截圖或 PDF 會存到雲端硬碟「${esc(S.trip?.title||"")}／重要文件」資料夾；圖片也會在 App 裡留一份，沒有網路時也能打開給櫃台或閘門看。</p>
+    <div class="banner warn">請不要放護照、身分證、信用卡這類個人資料。雲端資料夾如果設成「知道連結的人都能查看」，拿到連結的人都看得到。</div>
+    ${ro?"":`<form class="form" id="docF">
+      <label>名稱<input id="d_label" placeholder="例如：去程機票、迪士尼門票、新宿飯店訂房" maxlength="40"></label>
+      <div class="tags">${Object.entries(DKINDS).map(([k,n])=>`<button type="button" data-dkind="${k}" aria-pressed="${k===docKind}">${n}</button>`).join("")}</div>
+      <div class="row-actions"><label class="upload">📎 選擇截圖或 PDF<input type="file" id="d_file" accept="image/*,application/pdf" multiple></label><span class="sub" id="d_fn"></span></div>
+      <div class="sheet-actions"><button class="primary" type="submit" id="d_go">加入重要文件</button></div>
+    </form>`}
+    <div id="docList"></div>`,"docs");
+  renderDocs();
+  if(ro) return;
+  document.querySelectorAll("[data-dkind]").forEach(b=>b.onclick=()=>{ docKind=b.dataset.dkind; document.querySelectorAll("[data-dkind]").forEach(o=>o.setAttribute("aria-pressed",o===b)); });
+  $("d_file").onchange=e=>{ const f=[...e.target.files]; $("d_fn").textContent=f.length?f.map(x=>x.name).join("、"):""; };
+  $("docF").onsubmit=async e=>{ e.preventDefault(); const files=[...$("d_file").files]; if(!files.length){ toast("請先選擇截圖或 PDF"); return; }
+    const go=$("d_go"); go.disabled=true; let ok=0; const fail=[];
+    for(let i=0;i<files.length;i++){ const f=files[i]; go.textContent=`上傳中 ${i+1}/${files.length}…`;
+      if(f.size>DRIVE_MAX){ fail.push(f.name+"（超過 30 MB）"); continue; }
+      let img=""; if(f.type.startsWith("image")) for(const [mx,q] of [[1600,0.82],[1200,0.75],[900,0.7]]){ const b=await shrinkImage(f,mx,q); if(b!==f&&b.size<=650*1024){ img=await blobToDataUrl(b); break; } }
+      const j=DRIVE.state==="notset"?null:await driveSave({sub:"重要文件",filename:f.name,mimeType:f.type||"application/octet-stream",blob:f});
+      if(!j&&!img){ fail.push(f.name); continue; }
+      const label=$("d_label").value.trim()||f.name.replace(/\.[^.]+$/,"");
+      if(await guard(()=>put("docs",null,{label:files.length>1?`${label}${i+1}`.replace(/(\d)$/," $1"):label,kind:docKind,name:f.name,type:f.type||"",size:f.size,img,driveId:j?.id||"",url:j?.url||"",...stampBy()}))) ok++; else fail.push(f.name);
+    }
+    go.disabled=false; go.textContent="加入重要文件"; $("d_file").value=""; $("d_fn").textContent=""; $("d_label").value="";
+    toast([ok?`已加入 ${ok} 份文件`:"",fail.length?`${fail.length} 份沒有成功：${fail.join("、")}`:""].filter(Boolean).join("；"));
+  };
+}
+function renderDocs(){
+  const el=$("docList"); if(!el) return; const list=[...(S.docs||[])].sort((a,b)=>Object.keys(DKINDS).indexOf(a.kind)-Object.keys(DKINDS).indexOf(b.kind)||a.at-b.at);
+  el.innerHTML=list.length?Object.entries(DKINDS).filter(([k])=>list.some(d=>(d.kind||"other")===k)).map(([k,n])=>`<h3 class="doc-h">${n}</h3><div class="doc-grid">${list.filter(d=>(d.kind||"other")===k).map(d=>`<button class="doc-card" type="button" data-doc="${esc(d.id)}">${d.img?`<img src="${esc(d.img)}" alt="" loading="lazy">`:`<span class="vid-ph" aria-hidden="true">${d.type==="application/pdf"?"PDF":"📄"}</span>`}<span class="doc-l">${esc(d.label||d.name)}</span></button>`).join("")}</div>`).join(""):`<p class="sub">還沒有文件。</p>`;
+}
+function docView(id){
+  const d=(S.docs||[]).find(x=>x.id===id); if(!d) return;
+  openSheet(`<h2 style="word-break:break-all">${esc(d.label||d.name)}</h2>
+    <div class="viewer doc-view">${d.img?`<img src="${esc(d.img)}" alt="${esc(d.label||"")}">`:`<div class="vid-ph">${d.type==="application/pdf"?"PDF":"📄"}</div>`}</div>
+    <p class="sub">${(DKINDS[d.kind]||DKINDS.other)}・${esc(d.name)}・${mb(d.size||0)}・${esc(nameOf(d.by))} 於 ${stamp(d.at)} 加入</p>
+    <div class="sheet-actions">${d.url?`<a class="primary" style="text-align:center;text-decoration:none" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">在 Google 雲端硬碟開啟原檔</a>`:""}<button class="ghost" type="button" data-docsback>返回文件</button>${S.canWrite===false?"":`<button class="danger" type="button" id="docRm">從 App 移除</button>`}</div>
+    <p class="est">${d.img?"沒有網路時也能看這張圖。":"PDF 要連網才能打開。"}從 App 移除不會刪掉雲端硬碟裡的原檔。</p>`,"docview");
+  const rm=$("docRm"); if(!rm) return; let armed=false;
+  rm.onclick=async()=>{ if(!armed){ armed=true; rm.textContent="再按一次確認移除"; return; } if(await guard(()=>del("docs",d.id))){ toast("已從 App 移除"); docsSheet(); } };
 }
 
 /* ---------- 整理雲端硬碟：自動清除舊存檔、清理沒用到的照片影片 ---------- */
@@ -1677,6 +1867,7 @@ function settingsSheet(){
     <p class="est">自動儲存是整趟旅行共用的設定。版本都在「日誌 → 專案存檔」，可以隨時還原；手動按 💾 存的版本不會被自動刪掉。按 💾 存的版本也會照下面的設定備份到 Google 雲端硬碟；自動儲存的版本只存在 App 裡。</p>
     <div class="set-sub"><h4>Google 雲端硬碟備份</h4><div id="drivePanel2"></div></div>
   </section>
+  <section class="set-sec"><h3>🔒 我的記帳帳本</h3><p class="sub">「記帳」頁的個人記帳存在你自己的帳本，只有知道帳本代碼的人才看得到。換手機、或從主畫面和 Safari 分開打開時，把代碼貼到另一邊就能看到同一本帳。</p><div class="code-box">${esc(ensureLedgerKey())}</div><div class="row-actions"><button class="ghost" type="button" data-ledgercopy>複製帳本代碼</button></div><label class="sub" for="ledgerIn" style="display:block;margin-top:8px">使用另一個帳本代碼</label><div class="row-actions"><input id="ledgerIn" placeholder="貼上帳本代碼" autocomplete="off" autocapitalize="off" spellcheck="false" style="flex:1;min-width:0"><button class="primary sm" type="button" data-ledgeruse>使用</button></div></section>
   <section class="set-sec"><h3>顯示（只影響這支手機）</h3>
     <div class="sub" style="margin-bottom:6px">外觀</div>${chips("theme",[["auto","跟隨系統"],["light","淺色"],["dark","深色"]],prefs.theme)}
     <div class="sub" style="margin:12px 0 6px">字體大小</div>${chips("text",[["normal","標準"],["large","大"],["xl","特大"]],prefs.text)}
@@ -1746,6 +1937,16 @@ document.addEventListener("click",async e=>{
   if(e.target.closest("[data-signout]")){ signOut(auth); return; }
   if(T("[data-driveping]")){ drivePing(); return; }
   if(T("[data-driveclean]")){ cleanSheet(); return; }
+  if((el=T("[data-lcat]"))){ lState.cat=el.dataset.lcat; document.querySelectorAll("[data-lcat]").forEach(o=>o.setAttribute("aria-pressed",o===el)); return; }
+  if((el=T("[data-lpay]"))){ lState.pay=el.dataset.lpay; document.querySelectorAll("[data-lpay]").forEach(o=>o.setAttribute("aria-pressed",o===el)); return; }
+  if((el=T("[data-fxq]"))){ fxState.amt=el.dataset.fxq; const a=$("fxAmt"); if(a) a.value=fxState.amt; renderFx(); return; }
+  if(T("[data-fxreload]")){ loadFx(true); return; }
+  if((el=T("[data-mine]"))){ mineSheet(el.dataset.mine); return; }
+  if(T("[data-docs]")){ docsSheet(); return; }
+  if((el=T("[data-doc]"))){ docView(el.dataset.doc); return; }
+  if(T("[data-docsback]")){ docsSheet(); return; }
+  if(T("[data-ledgercopy]")){ copyText(LEDGER_KEY,"已複製帳本代碼"); return; }
+  if(T("[data-ledgeruse]")){ const v=($("ledgerIn")?.value||"").trim(); if(!/^[A-Za-z0-9_-]{20,80}$/.test(v)){ toast("帳本代碼不正確，請完整貼上"); return; } setLedgerKey(v); closeSheet(); toast("已切換到這個帳本"); return; }
   if((el=T("[data-tlike]"))){ el.setAttribute("aria-pressed",el.getAttribute("aria-pressed")!=="true"); return; }
   if((el=T("[data-skind]"))){ sug.kind=el.dataset.skind; document.querySelectorAll("[data-skind]").forEach(b=>b.setAttribute("aria-pressed",b===el)); return; }
   if((el=T("[data-addsug]"))){ el.disabled=true; await addSuggestion(Number(el.dataset.addsug)); return; }
