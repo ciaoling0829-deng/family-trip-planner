@@ -233,7 +233,7 @@ function render(){
   $("fab").hidden = S.tab!=="plan" || !t;
   $("ideaCount").hidden=!S.ideas.length; $("ideaCount").textContent=S.ideas.length;
   $("fareCount").hidden=!S.fares.length; $("fareCount").textContent=S.fares.length;
-  renderWishBar(); renderShopBar(); renderDocBar(); renderSaveBtn(); renderDrivePanel();
+  renderWishBar(); renderShopBar(); renderDocBar(); renderListsFold(); renderSaveBtn(); renderDrivePanel();
 }
 function renderPlan(){
   const t=S.trip;
@@ -2162,6 +2162,13 @@ async function ledgerToDrive(manual){
 }
 function setLedgerKey(k){ LEDGER_KEY=k; store.set("ledgerKey",k); startLedger(); }
 
+/* 想去清單＋購物清單收合在一起（記住這支手機上次是展開還是收合） */
+function renderListsFold(){
+  const f=$("listsFold"); if(!f) return; f.hidden=!S.trip; if(!S.trip) return;
+  if(!f.dataset.bound){ f.dataset.bound="1"; f.open=store.get("listsOpen")!=="0"; f.addEventListener("toggle",()=>store.set("listsOpen",f.open?"1":"0")); }
+  const w=wishOpen().length, must=wishOpen().filter(x=>prioOf(x)==="must").length, sh=(S.shopping||[]), left=sh.filter(x=>!x.bought).length;
+  $("listsSum").textContent=`想去 ${w} 個${must?`（⭐ ${must}）`:""}・購物 ${left}/${sh.length} 項沒買`;
+}
 /* ---------- 重要文件（機票、訂房、門票 QR code） ---------- */
 const DKINDS={flight:"✈️ 機票",stay:"🏨 住宿",ticket:"🎟 門票",move:"🚃 交通",ins:"🛡 保險",other:"📄 其他"};
 function renderDocBar(){

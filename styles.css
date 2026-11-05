@@ -484,3 +484,13 @@ body.is-dragging{overflow:hidden;touch-action:none}
 .wish-name{background:none;border:0;padding:0;font-size:16px;font-weight:700;text-align:left;color:inherit;overflow-wrap:anywhere}
 .wish-pick{background:var(--sunk);border-radius:12px;padding:10px 12px;margin-bottom:12px}
 .wish-pick .tags{max-height:132px;overflow-y:auto}
+/* 想去清單＋購物清單收合 */
+.lists-fold{background:var(--surface);border:1px solid var(--line);border-radius:12px;margin:0}
+.lists-fold>summary{list-style:none;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:12px 40px 12px 14px;cursor:pointer;position:relative}
+.lists-fold>summary::-webkit-details-marker{display:none}
+.lists-fold>summary::after{content:"";position:absolute;right:16px;top:50%;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translateY(-70%) rotate(45deg);transition:transform .15s}
+.lists-fold[open]>summary::after{transform:translateY(-30%) rotate(-135deg)}
+.lf-ttl{font-weight:700}
+.lf-body{display:grid;gap:8px;padding:0 10px 10px}
+.lf-body .wish-bar{border-color:var(--line);background:var(--bg)}
+section[data-tab="talk"]>.doc-bar{margin-bottom:12px}
