@@ -18,7 +18,7 @@ export const FIREBASE_CONFIG = {
 export const ACCESS_MODE = "link";
 
 // Cloudflare Worker 部署後的網址（結尾不要加斜線），例如 https://trip-ai.你的帳號.workers.dev
-export const AI_PROXY_URL = "";
+export const AI_PROXY_URL = "https://trip-ai.ciaoling0829.workers.dev";
 
 // 預設出發機場：TPE 桃園、RMQ 台中、KHH 高雄、TSA 松山
 export const DEFAULT_ORIGIN = "TPE";
