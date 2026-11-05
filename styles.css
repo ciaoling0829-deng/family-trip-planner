@@ -431,3 +431,20 @@ details.copy-box:not([open]){padding-block:12px}
 .doc-l{font-size:13px;overflow-wrap:anywhere;padding:0 2px 2px}
 .doc-view img{max-height:70vh;object-fit:contain;background:#fff}
 .led-drive{margin-top:14px;border-top:1px dashed var(--line);padding-top:10px}.led-drive .sub{margin:6px 0 0}
+/* 節日活動 */
+.tool.wide{grid-column:1/-1}
+.ev-chip{box-sizing:border-box;width:100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;background:var(--surface);border:1px dashed var(--c-ticket);border-radius:12px;padding:8px 12px;text-align:left;font-size:14px;color:inherit}
+.ev-chip > span:last-child{margin-left:auto;color:var(--muted)}
+.ev-dots{color:var(--c-ticket);letter-spacing:1px;font-size:12px}
+.ev-badge{display:inline-block;border-radius:999px;padding:0 8px;font-size:12px;font-weight:700;white-space:nowrap}
+.ev-go{background:#DDEFE4;color:#1F5E3A}.ev-ok{background:var(--lantern-soft);color:#7A4E0E}.ev-no{background:var(--bad-soft);color:var(--bad)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ev-go{background:#1E3A2A;color:#8FD3AA}:root:not([data-theme="light"]) .ev-ok{color:#F0C27A}}
+:root[data-theme="dark"] .ev-go{background:#1E3A2A;color:#8FD3AA}:root[data-theme="dark"] .ev-ok{color:#F0C27A}
+.ev-tabs{margin:10px 0}
+.ev-day{display:grid;gap:8px}
+.ev-dh{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.ev-hol{color:var(--bad);font-weight:700}
+.ev-crowd{margin:0;font-size:14px}
+.ev-card{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:2px;min-width:0}
+.ev-top{display:flex;gap:8px;justify-content:space-between;align-items:flex-start}.ev-top b{overflow-wrap:anywhere}
+.ev-tips,.ev-src{margin:0;padding-left:18px;font-size:14px}.ev-src a{overflow-wrap:anywhere}

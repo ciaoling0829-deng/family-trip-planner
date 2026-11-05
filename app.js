@@ -23,7 +23,7 @@ const LIKES = ["溫泉","美食","購物","自然風景","親子","文化古蹟"
 const ORIGINS = [["TPE","桃園"],["RMQ","台中"],["KHH","高雄"],["TSA","松山"]];
 const AIRPORTS = ["TPE 桃園","RMQ 台中","KHH 高雄","TSA 松山","NRT 東京成田","HND 東京羽田","KIX 大阪關西","NGO 名古屋","FUK 福岡","CTS 札幌新千歲","OKA 沖繩那霸","SDJ 仙台","KIJ 新潟","HKD 函館","ICN 首爾仁川","PUS 釜山","CJU 濟州","BKK 曼谷","CNX 清邁","SGN 胡志明市","DAD 峴港","SIN 新加坡","HKG 香港","MFM 澳門","HUN 花蓮","TTT 台東","MZG 澎湖","KNH 金門"];
 const WD = ["日","一","二","三","四","五","六"];
-const SUBS = ["items","comments","packing","journal","media","snapshots","fares","dayplans","wishes","entries","shopping","docs"];
+const SUBS = ["items","comments","packing","journal","media","snapshots","fares","dayplans","wishes","entries","shopping","docs","events"];
 
 /* ---------- firebase ---------- */
 const configured = !String(FIREBASE_CONFIG.apiKey).includes("請填入");
@@ -80,7 +80,7 @@ async function guard(fn){
 let unsubTrip = [];
 function subscribeTrip(id){
   unsubTrip.forEach(u=>u()); unsubTrip=[];
-  S.tripId=id; S.trip=null; S.items=[]; S.comments=[]; S.packing=[]; S.journal={}; S.dayplans={}; S.wishes=[]; S.entries=[]; S.shopping=[]; S.docs=[]; S.media=[]; S.snaps=[]; S.fares=[]; S.day=0;
+  S.tripId=id; S.trip=null; S.items=[]; S.comments=[]; S.packing=[]; S.journal={}; S.dayplans={}; S.wishes=[]; S.entries=[]; S.shopping=[]; S.docs=[]; S.events=[]; S.media=[]; S.snaps=[]; S.fares=[]; S.day=0;
   if(!id){ render(); return; }
   store.set("lastTrip",id);
   const err = e => { console.warn(e); setSync(false,"同步中斷，請重新整理"); };
@@ -245,7 +245,7 @@ function renderPlan(){
   $("days").innerHTML=chips;
   const list=S.items.filter(x=>x.day===S.day).sort((a,b)=>(a.time||"99").localeCompare(b.time||"99"));
   $("dayTitle").textContent=`Day ${S.day+1}　${dLabel(dayDate(S.day))}`;
-  $("btnSuggest").hidden=false; $("dayPlan").innerHTML=dayPlanCard();
+  $("btnSuggest").hidden=false; $("dayPlan").innerHTML=dayPlanCard()+evChip();
   const dc=list.reduce((s,x)=>s+costOf(x),0);
   $("dayCost").textContent= dc ? `本日 ${money(dc)}` : "";
   let html="";
@@ -1433,6 +1433,7 @@ function refreshOpenSheet(kind){
   if(kind==="wishes"){ renderWishes(); return; }
   if(kind==="shopping"){ renderShopping(); return; }
   if(kind==="docs"){ renderDocs(); return; }
+  if(kind==="events"){ renderEvents(); return; }
   if(kind==="trips"){ const el=$("tripList"); if(!el) return; el.innerHTML=S.trips.length?S.trips.map(t=>`<button class="trip-row" type="button" data-pick="${esc(t.id)}" aria-current="${t.id===S.tripId}"><span><b>${esc(t.title||"未命名")}</b><span class="sub">${esc(t.destination||"")}${t.startDate?"・"+esc(t.startDate):""}</span></span><span aria-hidden="true">›</span></button>`).join(""):`<p class="sub">還沒有旅行。</p>`; }
   if(kind==="ideas"){ const el=$("ideaList"); if(!el) return; const list=[...S.ideas].sort((a,b)=>((b.likes||[]).length-(a.likes||[]).length)||(b.at-a.at)); el.innerHTML=list.length?list.map(ideaCard).join(""):`<p class="sub" style="margin:0">還沒有候選地。輸入想去的地方並按「加入候選」，家人就能一起投票。</p>`; }
   if(kind==="fares"){ const el=$("fareList"); if(!el) return; const list=[...S.fares].sort((a,b)=>a.price-b.price); const min=list[0]?.price;
@@ -1553,6 +1554,75 @@ async function syncPhotosToDrive(day,files,big){
   if(n){ toast(`${n} 個檔案也同步到雲端硬碟「${folderName(day)}」了${big?`（${big} 個超過 30 MB 沒有同步）`:""}`); if(url&&!S.journal["d"+day]?.driveUrl) saveJournal(day,{driveUrl:url}); }
 }
 
+
+/* ---------- 當地節日活動（AI 先用 Google 搜尋查證） ---------- */
+const EV_REC={go:["推薦去","ev-go"],ok:["可以去","ev-ok"],avoid:["不建議","ev-no"]};
+const EV_TYPE={festival:"祭典節慶",holiday:"假日",seasonal:"季節活動",event:"活動"};
+const evDoc=()=>(S.events||[]).find(x=>x.id==="all");
+const evKey=()=>{ const t=S.trip; return t?.startDate?`${t.startDate}|${t.days||1}|${t.destination||""}`:""; };
+const crowdDots=n=>{ n=Math.max(0,Math.min(5,Math.round(Number(n)||0))); return n?`<span class="ev-dots" aria-label="人潮 ${n} / 5">${"●".repeat(n)}${"○".repeat(5-n)}</span>`:""; };
+const crowdWord=n=>["","很空","人少","普通","人多","非常擁擠"][Math.round(Number(n)||0)]||"";
+function evDay(i){ const d=evDoc(); if(!d||d.key!==evKey()) return null; return (d.data?.days||[]).find(x=>Number(x.day)===i+1)||null; }
+function evChip(){
+  const x=evDay(S.day); if(!x) return "";
+  const n=(x.events||[]).length, rec=EV_REC[x.verdict]||EV_REC.ok;
+  return `<button class="ev-chip" type="button" data-events>🎎 ${x.holiday?`<b>${esc(x.holiday)}</b>・`:""}${n?`${n} 個節日活動・`:""}人潮 ${crowdDots(x.crowd)} <span class="ev-badge ${rec[1]}">${rec[0]}</span><span aria-hidden="true">›</span></button>`;
+}
+let evBusy=false, evTab=null;
+function eventsSheet(){
+  const t=S.trip; if(!t) return;
+  if(evTab==null) evTab=S.day;
+  openSheet(`<h2>🎎 當地節日活動</h2>
+    <p class="sub" style="margin-top:-6px">查這趟旅行每一天在「${esc(t.destination||t.title)}」有哪些假日、祭典、季節和大型活動，人潮多不多、推不推薦去。</p>
+    <div id="evBody"></div>`,"events");
+  renderEvents();
+}
+function renderEvents(){
+  const el=$("evBody"); if(!el) return; const t=S.trip;
+  if(!t?.startDate){ el.innerHTML=`<p class="msg">請先在 ⚙ 設定 →「旅行設定」填入出發日期，才能查當天的節日活動。</p>`; return; }
+  const d=evDoc(), fresh=d&&d.key===evKey(), n=t.days||1, ro=S.canWrite===false;
+  const btn=ro?"":`<div class="sheet-actions"><button class="primary" type="button" data-evrun ${evBusy?"disabled":""}>${evBusy?"查詢中，大約 20～40 秒…":d?"重新查詢":"查詢整趟旅行的節日活動"}</button></div>`;
+  if(!d||evBusy&&!fresh){ el.innerHTML=`${d&&!fresh?`<p class="msg">旅行日期或地點改過了，請重新查詢。</p>`:""}${btn}<div id="evMsg"></div>`; return; }
+  const data=d.data||{}, days=data.days||[];
+  const tabs=Array.from({length:n},(_,i)=>{ const x=days.find(y=>Number(y.day)===i+1); return `<button type="button" data-evtab="${i}" aria-pressed="${i===evTab}">Day ${i+1}${x?.holiday?" 🎌":(x?.events||[]).length?" •":""}</button>`; }).join("");
+  const x=days.find(y=>Number(y.day)===evTab+1);
+  const rec=x?EV_REC[x.verdict]||EV_REC.ok:null;
+  el.innerHTML=`${fresh?"":`<p class="msg">旅行日期或地點改過了，下面是舊的結果，請重新查詢。</p>`}
+    <div class="drive-status">${data.verified?`<span class="dot"></span><span>已用 Google 搜尋查證・${stamp(d.at)} 查詢</span>`:`<span class="dot off"></span><span>這次沒有上網查證（可能是搜尋額度用完），內容請再自行確認・${stamp(d.at)}</span>`}</div>
+    ${data.summary?`<p style="margin:10px 0">${esc(data.summary)}</p>`:""}
+    <div class="tags ev-tabs">${tabs}</div>
+    ${x?`<div class="ev-day"><div class="ev-dh"><b>Day ${evTab+1}・${dLabel(dayDate(evTab))}</b>${x.holiday?`<span class="ev-hol">🎌 ${esc(x.holiday)}</span>`:""}</div>
+      <p class="ev-crowd">整體人潮 ${crowdDots(x.crowd)} ${crowdWord(x.crowd)}　<span class="ev-badge ${rec[1]}">${rec[0]}</span></p>
+      ${x.note?`<p class="sub" style="margin:0 0 8px">${esc(x.note)}</p>`:""}
+      ${(x.events||[]).length?(x.events||[]).map((e,k)=>{ const r=EV_REC[e.recommend]||EV_REC.ok; return `<div class="ev-card">
+        <div class="ev-top"><b>${esc(e.name||"")}</b><span class="ev-badge ${r[1]}">${r[0]}</span></div>
+        ${e.nameLocal&&e.nameLocal!==e.name?`<div class="sub">${esc(e.nameLocal)}</div>`:""}
+        <div class="sub">${[EV_TYPE[e.type]||"",e.where||"",e.time||""].filter(Boolean).map(esc).join("・")}</div>
+        <div class="ev-crowd">人潮 ${crowdDots(e.crowd)} ${crowdWord(e.crowd)}${e.confirmed===false?`　<span class="ev-badge ev-ok">日期待確認</span>`:""}</div>
+        ${e.why?`<p style="margin:4px 0">${esc(e.why)}</p>`:""}${e.tip?`<p class="sub" style="margin:0">💡 ${esc(e.tip)}</p>`:""}
+        <div class="row-actions">${/^https?:\/\//.test(e.url||"")?`<a class="link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">官方資訊 ↗</a>`:""}${ro?"":`<button class="link" type="button" data-evwish="${evTab}:${k}">♡ 加入想去清單</button>`}</div>
+      </div>`; }).join(""):`<p class="sub">這天沒有查到特別的節日活動。</p>`}
+    </div>`:`<p class="sub">這天沒有資料，請重新查詢。</p>`}
+    ${(data.tips||[]).length?`<h3 style="margin:14px 0 6px;font-size:15px">整趟旅行的提醒</h3><ul class="ev-tips">${data.tips.map(s=>`<li>${esc(s)}</li>`).join("")}</ul>`:""}
+    ${(data.sources||[]).length?`<details class="fold" style="margin-top:10px"><summary><span class="sub">查證來源（${data.sources.length}）</span></summary><ul class="ev-src">${data.sources.map(s=>`<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a></li>`).join("")}</ul></details>`:""}
+    <p class="est">AI 整理的資訊可能有誤，出發前請以官方網站為準。</p>
+    ${btn}<div id="evMsg"></div>`;
+}
+async function runEvents(){
+  const t=S.trip; if(!t?.startDate||evBusy) return;
+  evBusy=true; renderEvents();
+  try{
+    const days=Array.from({length:t.days||1},(_,i)=>{ const d=dayDate(i); return {day:i+1,date:iso(d),weekday:WD[d.getDay()],theme:dp(i).theme||""}; });
+    const r=await ai("events",{destination:t.destination||t.title,travelers:t.travelers||1,who:t.who||"",likes:t.likes||[],days});
+    if(!Array.isArray(r?.days)) throw {code:"bad_output"};
+    await guard(()=>put("events","all",{key:evKey(),data:r,at:Date.now(),by:S.user?.uid||null}));
+    evBusy=false; renderEvents(); renderPlan(); toast(r.verified?"已查好節日活動（已上網查證）":"已查好節日活動，這次沒有上網查證");
+  }catch(e){ evBusy=false; renderEvents(); const m=$("evMsg"); if(m) m.innerHTML=`<p class="msg">${esc(aiError(e))}</p>`; }
+}
+async function evToWish(tag){
+  const [di,k]=tag.split(":").map(Number); const x=evDay(di)||((evDoc()?.data?.days)||[]).find(y=>Number(y.day)===di+1); const e=x?.events?.[k]; if(!e) return;
+  if(await guard(()=>put("wishes",null,{name:e.name,cat:"tour",prio:"want",addr:e.where||"",note:[`Day ${di+1} ${e.time||""}`.trim(),e.nameLocal&&e.nameLocal!==e.name?e.nameLocal:"",e.tip||""].filter(Boolean).join("・"),...stampBy()}))) toast("已加入想去清單");
+}
 
 /* ---------- 匯率換算 ---------- */
 const FX_CURS=[["TWD","新台幣"],["JPY","日圓"],["KRW","韓元"],["USD","美元"],["EUR","歐元"],["HKD","港幣"],["CNY","人民幣"],["THB","泰銖"],["SGD","新加坡幣"],["VND","越南盾"],["MYR","馬幣"],["PHP","菲律賓披索"],["GBP","英鎊"],["AUD","澳幣"],["MOP","澳門幣"]];
@@ -1926,6 +1996,10 @@ document.addEventListener("click",async e=>{
   if((el=T("[data-pick]"))){ subscribeTrip(el.dataset.pick); closeSheet(); return; }
   if(T("[data-openideas]")){ ideasSheet(); return; }
   if(T("[data-suggest]")){ suggestSheet(); return; }
+  if(T("[data-events]")){ evTab=S.day; eventsSheet(); return; }
+  if(T("[data-evrun]")){ runEvents(); return; }
+  if((el=T("[data-evtab]"))){ evTab=Number(el.dataset.evtab); renderEvents(); return; }
+  if((el=T("[data-evwish]"))){ evToWish(el.dataset.evwish); return; }
   if((el=T("[data-reason]"))){ const inp=$("d_note"); if(!inp) return; const parts=inp.value.split("、").map(x=>x.trim()).filter(Boolean); const r=el.dataset.reason; const i=parts.indexOf(r); if(i>=0) parts.splice(i,1); else parts.push(r); inp.value=parts.join("、"); el.setAttribute("aria-pressed",i<0); return; }
   if(e.target.closest("[data-editplans]")){ plansSheet(); return; }
   if(e.target.closest("[data-relegs]")){ autoLegs(S.day,true); return; }
