@@ -1056,18 +1056,26 @@ const isPoint = x => x.cat!=="move" && x.cat!=="stay";
 function busyOf(day,skip){
   return S.items.filter(x=>x.day===day&&x.time&&!(skip&&skip.has(x.id))&&!(x.autoStay&&(x.stayRole==="depart"||x.stayRole==="return"))).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b]; });
 }
+// 估計兩地之間的大眾運輸時間（分鐘）：等車轉乘約 8 分鐘＋每公里約 4 分鐘
+const FAR_MIN=50;
+const travelMin=(p,q)=>Math.round(8+km(p,q)*4);
 function makeSlots(entries,{skip}={}){
   // entries: [{key, w, r}]；回傳每個 key 的 {day(1 起), time, moved, note}
   const rule=PACE_RULE[paceOf()]||PACE_RULE.relaxed, n=S.trip?.days||1, out={};
-  const busy=Array.from({length:n},(_,i)=>busyOf(i,skip));
-  // 每天已經有的地點位置（行程＋當晚住宿），用來判斷新的地點離哪一天最近
-  const pts=Array.from({length:n},(_,i)=>{ const a=S.items.filter(x=>x.day===i&&x.time&&!isFlight(x)&&!(skip&&skip.has(x.id))&&!String(x.title).includes(STAY_TBD)).map(x=>geoGet(stopQuery(x))).filter(Boolean); const h=dp(i).hotelAddr&&!isUrl(dp(i).hotelAddr)?geoGet(dp(i).hotelAddr):null; if(h) a.push(h); return a; });
-  const distTo=(d,p)=>{ if(!p||!pts[d].length) return null; return Math.min(...pts[d].map(q=>km(p,q))); };
+  // 每段行程的時間和位置；位置用來估計前後要留多少交通時間
+  const anch=x=>x.autoStay&&(x.stayRole==="depart"||x.stayRole==="return");
+  const busy=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&x.time&&!(skip&&skip.has(x.id))&&!anch(x)).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b,isFlight(x)||String(x.title).includes(STAY_TBD)?null:geoGet(stopQuery(x))]; }));
+  // 每天已經有的景點位置（不含住宿：每天都回同一間住宿，算進來會讓地點又被平均分散）
+  const pts=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&x.time&&!isFlight(x)&&!x.autoStay&&x.cat!=="stay"&&!(skip&&skip.has(x.id))&&!String(x.title).includes(STAY_TBD)).map(x=>geoGet(stopQuery(x))).filter(Boolean));
+  const hotelOf=i=>dp(i).hotelAddr&&!isUrl(dp(i).hotelAddr)?geoGet(dp(i).hotelAddr):null;
+  const nearest=(d,p)=>{ if(!p||!pts[d].length) return null; return Math.min(...pts[d].map(q=>travelMin(p,q))); };
+  let curHere=null;   // 目前正在排的地點位置
+  const gapTo=pt=>curHere&&pt?Math.max(15,travelMin(curHere,pt)):rule.gap;
   const count=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&isPoint(x)&&!(skip&&skip.has(x.id))).length);
   // 整天的行程（例如主題樂園）會佔滿出門時間
   const anchors=Array.from({length:n},(_,i)=>{ const its=S.items.filter(x=>x.day===i&&x.autoStay); const dep=its.find(x=>x.stayRole==="depart"), ret=its.find(x=>x.stayRole==="return"); return {from:dep?toMin(dep.end||dep.time):null,to:ret?toMin(ret.time):null}; });
   const free=(d,a,len)=>{ const A=anchors[d]; const lo=A.from!=null?Math.max(A.from,rule.start-30):rule.start-30; const hi=A.to!=null?A.to-15:Math.max(rule.end,a<1050?rule.end:1290);
-    return a>=lo&&a+len<=hi&&busy[d].every(([x,y])=>a+len+rule.gap<=x||a>=y+rule.gap); };
+    return a>=lo&&a+len<=hi&&busy[d].every(([x,y,pt])=>{ const g=gapTo(pt); return a+len+g<=x||a>=y+g; }); };
   const tryDay=(d,pref,len,cat)=>{
     const wins=cat==="food"?(pref!=null&&pref>=MEALS[1][0]-60?[MEALS[1],MEALS[0]]:[MEALS[0],MEALS[1]]):[[rule.start,rule.end-len]];
     for(const [ws,we] of wins){
@@ -1080,7 +1088,7 @@ function makeSlots(entries,{skip}={}){
   };
   const order=entries.map((e,k)=>({...e,k})).sort((a,b)=>(prioOf(a.w)==="must"?0:1)-(prioOf(b.w)==="must"?0:1)||((a.r.day||99)-(b.r.day||99))||((a.r.time?toMin(a.r.time):9999)-(b.r.time?toMin(b.r.time):9999)));
   for(const e of order){
-    const must=prioOf(e.w)==="must", len=parseDur(e.r.duration)||DEF_DUR[e.w.cat]||60, here=geoGet(e.w.name!=null?wishQuery(e.w):null);
+    const must=prioOf(e.w)==="must", len=parseDur(e.r.duration)||DEF_DUR[e.w.cat]||60, here=geoGet(e.w.name!=null?wishQuery(e.w):null); curHere=here;
     const aiDay=e.r.day?e.r.day-1:null, pref=e.r.time?toMin(e.r.time):null;
     // 每一天都找一個空檔，再挑最適合的：越接近 AI 建議的時間越好、越空的日子越好、能留在 AI 建議的那天更好
     let got=null;
@@ -1089,18 +1097,22 @@ function makeSlots(entries,{skip}={}){
       for(let d=0;d<n;d++){
         if(pass===0&&count[d]>=rule.max) continue;
         const t=tryDay(d,pref,len,e.w.cat); if(t==null) continue;
-        // 分數越低越好：離這天其他地點越近越好（最重要）、越接近建議時間越好、這天越空越好
-        const dk=distTo(d,here), far=dk==null?(here?4:0):Math.min(dk,40);
-        const score=far*25+(pref!=null?Math.abs(t-pref)*0.25:0)+(aiDay!=null&&d!==aiDay?30:0)+count[d]*15+(aiDay!=null?Math.abs(d-aiDay)*5:d);
+        // 分數越低越好。最重要的是交通時間：50 分鐘內算同一區，優先排在一起；超過 50 分鐘算遠，盡量另開一天
+        // 不為了讓每天都有行程而平均分配（「這天比較空」只當最後的參考）
+        const tm=nearest(d,here);
+        // 25 分鐘內很近；25～50 分鐘還算同一區但不鼓勵（有空的日子就另開一天）；50 分鐘以上算遠
+        const place=!here?0:tm==null?60:tm<=25?tm:tm<=FAR_MIN?25+(tm-25)*3:200+tm;
+        const h=hotelOf(d), hotelCost=here&&h?Math.min(travelMin(here,h),90)*0.3:0;
+        const score=place*3+hotelCost+(pref!=null?Math.abs(t-pref)*0.25:0)+(aiDay!=null&&d!==aiDay?20:0)+count[d]*3+(aiDay!=null?Math.abs(d-aiDay)*2:d*0.5);
         if(!best||score<best.score) best={d,t,score};
       }
       if(best){ got=best; break; }
     }
     if(!got){ out[e.key]={day:null,time:"",moved:false,note:must?"每天的空檔都排不下，請自己挑一天":"時間排不下（每天都已排滿或沒有空檔）"}; continue; }
-    busy[got.d].push([got.t,got.t+len]); count[got.d]++; if(here) pts[got.d].push(here);
+    busy[got.d].push([got.t,got.t+len,here]); count[got.d]++; if(here) pts[got.d].push(here);
     const moved=aiDay!==got.d||pref!==got.t;
     if(aiDay==null){ out[e.key]={day:got.d+1,time:fromMin(got.t),moved:true,len,note:`AI 原本覺得排不下，這裡找到 Day ${got.d+1} 的空檔，請確認營業時間${e.r.why?`（AI 的原因：${String(e.r.why).slice(0,40)}）`:""}`}; continue; }
-    out[e.key]={day:got.d+1,time:fromMin(got.t),moved,len,note:moved?`已避開重疊${aiDay!=null&&aiDay!==got.d?`，從 Day ${aiDay+1} 改到 Day ${got.d+1}`:""}，並留 ${rule.gap} 分鐘交通時間`:""};
+    out[e.key]={day:got.d+1,time:fromMin(got.t),moved,len,note:moved?`已避開重疊${aiDay!=null&&aiDay!==got.d?`，從 Day ${aiDay+1} 改到 Day ${got.d+1}`:""}，並預留前後的交通時間`:""};
   }
   return out;
 }
