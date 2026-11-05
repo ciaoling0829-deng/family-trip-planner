@@ -252,6 +252,7 @@ function renderPlan(){
   if(S.day===0 && t.flightOut && !S.items.some(x=>x.flightItem)) html+=infoCard("去程航班",t.flightOut);
   if(!list.length) html+=`<div class="empty">這一天還沒有安排。按右下角「＋ 新增行程」，或按上方「推薦這天的餐廳和景點」。</div>`;
   const ov=new Set(); { const tl=list.filter(x=>x.time&&x.end); for(const A of tl) for(const B of list) if(B!==A&&B.time&&toMin(B.time)>=toMin(A.time)&&toMin(B.time)<toMin(A.end)){ ov.add(A.id); ov.add(B.id); } }
+  if(ov.size&&S.canWrite!==false){ const mv=list.filter(x=>ov.has(x.id)&&x.wishId).length; html+=`<div class="alert warn ov-bar"><span>⚠️ 這天有 ${ov.size} 個行程時間重疊</span>${mv?`<button class="primary sm" type="button" data-fixov="${S.day}">自動調整時間</button>`:`<span class="sub">點開行程改時間</span>`}</div>`; }
   let prevIt=null;
   for(const it of list){
     if(prevIt && !isFlight(prevIt) && !isFlight(it)) html+=legRow(prevIt,it);
@@ -902,7 +903,7 @@ function renderWishPlan(){
       return `<div class="idea wp-row">
         <div class="idea-top"><b>${esc(r.w.name)}</b><span class="badges">${prioBadge(r.w)}${r.day?`<span class="pill">Day ${r.day}${r.time?" "+esc(r.time):""}</span>`:`<span class="chip">${prioOf(r.w)==="must"?"排不進去":"時間排不下"}</span>`}</span></div>
         ${r.why?`<div style="font-size:14px">${esc(r.why)}</div>`:""}
-        ${r.warn?`<div class="est">⚠️ ${esc(r.warn)}</div>`:""}
+        ${r.warn?`<div class="est">⚠️ ${esc(r.warn)}</div>`:""}${r.moved&&r.fixNote?`<div class="est">🔧 ${esc(r.fixNote)}</div>`:""}
         ${S.canWrite!==false?`<div class="wp-edit"><label class="sub">排在<select id="wp_d${r.k}">${opts}</select></label><label class="sub">時間<input id="wp_t${r.k}" type="time" value="${esc(r.time||"")}"></label></div>
         <div class="row-actions"><button class="ghost" type="button" data-wpadd="${r.k}">＋ 加入行程</button>${r.duration?`<span class="sub">${esc(r.duration)}</span>`:""}</div>`:""}
       </div>`;
@@ -919,27 +920,100 @@ async function runWishPlan(auto){
     const n=S.trip?.days||1;
     const plans=(r?.plans||[]).map(x=>({i:Number(x.i),day:Number.isInteger(Number(x.day))&&Number(x.day)>=1&&Number(x.day)<=n?Number(x.day):null,time:/^\d{1,2}:\d{2}$/.test(x.time||"")?String(x.time).padStart(5,"0"):"",duration:String(x.duration||"").slice(0,20),why:String(x.why||"").slice(0,160),warn:String(x.warn||"").slice(0,100)})).filter(x=>list[x.i]);
     const seen=new Set(); wp.res=plans.filter(x=>!seen.has(x.i)&&seen.add(x.i)); wp.summary=String(r?.summary||"").slice(0,160);
+    // 不完全照 AI 的時間：確認不和已排行程或彼此重疊、留交通時間、一天不排太滿，必要時改到空的日子
+    const fixed=makeSlots(wp.res.map((x,k)=>({key:k,w:list[x.i],r:x})));
+    wp.res=wp.res.map((x,k)=>{ const f=fixed[k]; if(!f) return x; return {...x,aiDay:x.day,aiTime:x.time,day:f.day,time:f.time,duration:x.duration||(f.len?`${f.len}分`:""),why:f.day==null&&f.note?`${x.why?x.why+"；":""}${f.note}`:x.why,moved:f.moved,fixNote:f.note}; });
     if(!wp.res.length) wp.err="這次沒有排出建議，請再試一次。";
   }catch(e){ console.warn(e); wp.err=aiError(e); }
   wp.busy=false; renderWishes();
   if(auto&&wp.res?.length) await addWishPlans(wp.res.map((r,k)=>k),true);
 }
+
+/* ---------- 排程檢查：AI 只給建議，真正排入前由這裡確認不重疊、留交通時間、一天不排太滿 ---------- */
+const PACE_RULE={relaxed:{start:600,end:1140,max:4,gap:45},tight:{start:510,end:1260,max:7,gap:30}};
+const DEF_DUR={food:75,tour:90,shop:60,ticket:120,other:60};
+const MEALS=[[690,810],[1050,1200]];   // 午餐 11:30–13:30、晚餐 17:30–20:00 開始
+const isPoint = x => x.cat!=="move" && x.cat!=="stay";
+function busyOf(day,skip){
+  return S.items.filter(x=>x.day===day&&x.time&&!(skip&&skip.has(x.id))).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b]; });
+}
+function makeSlots(entries,{skip}={}){
+  // entries: [{key, w, r}]；回傳每個 key 的 {day(1 起), time, moved, note}
+  const rule=PACE_RULE[paceOf()]||PACE_RULE.relaxed, n=S.trip?.days||1, out={};
+  const busy=Array.from({length:n},(_,i)=>busyOf(i,skip));
+  const count=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&isPoint(x)&&!(skip&&skip.has(x.id))).length);
+  // 整天的行程（例如主題樂園）會佔滿出門時間
+  const free=(d,a,len)=>a>=rule.start-30&&a+len<=Math.max(rule.end,a<1050?rule.end:1290)&&busy[d].every(([x,y])=>a+len+rule.gap<=x||a>=y+rule.gap);
+  const tryDay=(d,pref,len,cat)=>{
+    const wins=cat==="food"?(pref!=null&&pref>=MEALS[1][0]-60?[MEALS[1],MEALS[0]]:[MEALS[0],MEALS[1]]):[[rule.start,rule.end-len]];
+    for(const [ws,we] of wins){
+      const cand=[]; const p=pref!=null&&pref>=ws&&pref<=we?pref:null;
+      if(p!=null){ for(let t=p;t<=we;t+=15) cand.push(t); for(let t=p-15;t>=ws;t-=15) cand.push(t); }
+      else for(let t=ws;t<=we;t+=15) cand.push(t);
+      for(const t of cand) if(free(d,t,len)) return t;
+    }
+    return null;
+  };
+  const order=entries.map((e,k)=>({...e,k})).sort((a,b)=>(prioOf(a.w)==="must"?0:1)-(prioOf(b.w)==="must"?0:1)||((a.r.day||99)-(b.r.day||99))||((a.r.time?toMin(a.r.time):9999)-(b.r.time?toMin(b.r.time):9999)));
+  for(const e of order){
+    const must=prioOf(e.w)==="must", len=parseDur(e.r.duration)||DEF_DUR[e.w.cat]||60;
+    const aiDay=e.r.day?e.r.day-1:null, pref=e.r.time?toMin(e.r.time):null;
+    // 每一天都找一個空檔，再挑最適合的：越接近 AI 建議的時間越好、越空的日子越好、能留在 AI 建議的那天更好
+    let got=null;
+    for(const pass of must?[0,1]:[0]){
+      let best=null;
+      for(let d=0;d<n;d++){
+        if(pass===0&&count[d]>=rule.max) continue;
+        const t=tryDay(d,pref,len,e.w.cat); if(t==null) continue;
+        const score=(pref!=null?Math.abs(t-pref):0)+(aiDay!=null&&d!==aiDay?60:0)+count[d]*50+(aiDay!=null?Math.abs(d-aiDay)*10:d);
+        if(!best||score<best.score) best={d,t,score};
+      }
+      if(best){ got=best; break; }
+    }
+    if(!got){ out[e.key]={day:null,time:"",moved:false,note:must?"每天的空檔都排不下，請自己挑一天":"時間排不下（每天都已排滿或沒有空檔）"}; continue; }
+    busy[got.d].push([got.t,got.t+len]); count[got.d]++;
+    const moved=aiDay!==got.d||pref!==got.t;
+    if(aiDay==null){ out[e.key]={day:got.d+1,time:fromMin(got.t),moved:true,len,note:`AI 原本覺得排不下，這裡找到 Day ${got.d+1} 的空檔，請確認營業時間${e.r.why?`（AI 的原因：${String(e.r.why).slice(0,40)}）`:""}`}; continue; }
+    out[e.key]={day:got.d+1,time:fromMin(got.t),moved,len,note:moved?`已避開重疊${aiDay!=null&&aiDay!==got.d?`，從 Day ${aiDay+1} 改到 Day ${got.d+1}`:""}，並留 ${rule.gap} 分鐘交通時間`:""};
+  }
+  return out;
+}
+function overlapsOf(day){
+  const list=dayList(day).filter(x=>x.time); const bad=new Set();
+  for(let i=0;i<list.length;i++) for(let j=i+1;j<list.length;j++){ const a=list[i],b=list[j]; const a1=toMin(a.time),a2=a.end?toMin(a.end):a1+(DEF_DUR[a.cat]||60),b1=toMin(b.time),b2=b.end?toMin(b.end):b1+(DEF_DUR[b.cat]||60); if(a1<b2&&b1<a2){ bad.add(a.id); bad.add(b.id); } }
+  return bad;
+}
+async function fixOverlaps(day){
+  const bad=overlapsOf(day); const movable=dayList(day).filter(x=>bad.has(x.id)&&x.wishId);
+  // 每組重疊保留時間最早、或不是從想去清單來的那一個，其餘重新安排
+  const keep=new Set(dayList(day).filter(x=>bad.has(x.id)&&!x.wishId).map(x=>x.id));
+  const sorted=movable.sort((a,b)=>toMin(a.time)-toMin(b.time));
+  if(!keep.size&&sorted.length) keep.add(sorted.shift().id);
+  if(!sorted.length){ toast("這天重疊的行程不是從想去清單排進來的，請點開行程自己調整時間"); return; }
+  const skip=new Set(sorted.map(x=>x.id));
+  const entries=sorted.map(x=>{ const w=(S.wishes||[]).find(v=>v.id===x.wishId)||{id:x.wishId,name:x.title,cat:x.cat,prio:"want"}; return {key:x.id,w:{...w,prio:"must"},r:{day:day+1,time:x.time,duration:x.end?`${toMin(x.end)-toMin(x.time)}分`:""}}; });
+  const res=makeSlots(entries,{skip}); let n=0; const days=new Set([day]);
+  const ok=await guard(async()=>{ for(const x of sorted){ const r=res[x.id]; if(!r?.day) continue; const len=r.len||(x.end?toMin(x.end)-toMin(x.time):60); const {id,...rest}=x; await put("items",id,{...rest,day:r.day-1,time:r.time,end:addMin(r.time,len)}); days.add(r.day-1); n++; } });
+  if(ok){ toast(n?`已重新安排 ${n} 個行程，不再重疊`:"找不到空檔，請自己調整"); days.forEach(d=>scheduleLegs(d)); render(); }
+}
+
 function wishToItem(w,day,time,r){
   return {day,time:time||"",end:endOf(time,r?.duration),title:w.name,cat:w.cat||"other",addr:w.addr||"",est:0,actual:0,note:[w.note,r?.duration,r?.warn].filter(Boolean).join("・"),wishId:w.id,...stampBy()};
 }
 async function addWishPlans(keys,auto){
-  const days=new Set(); let added=0, skipped=0; const addedI=new Set();
+  const days=new Set(); let added=0, skipped=0, movedN=0; const addedI=new Set();
   const ok=await guard(async()=>{
     for(const k of keys){
       const r=wp.res?.[k]; const w=r&&wp.list[r.i]; if(!w||wishItem(w)) continue;
       const dSel=$("wp_d"+k), tSel=$("wp_t"+k);
-      const day=dSel?Number(dSel.value):r.day, time=tSel?tSel.value:r.time;
+      let day=dSel?Number(dSel.value):r.day, time=tSel?tSel.value:r.time;
       if(!day){ skipped++; continue; }
+      if(!auto||day!==r.day||time!==r.time){ const f=makeSlots([{key:0,w:{...w,prio:"must"},r:{...r,day,time}}])[0]; if(f?.day&&f.moved){ day=f.day; time=f.time; movedN++; } }
       await put("items",null,wishToItem(w,day-1,time,r)); days.add(day-1); added++; addedI.add(r.i);
     }
   });
   if(ok&&auto){ wp.added=added; const left=(wp.res||[]).filter(r=>wp.list[r.i]&&!addedI.has(r.i)&&!wishItem(wp.list[r.i])); const mustLeft=left.filter(r=>prioOf(wp.list[r.i])==="must").length; toast(added?`已排入 ${added} 個地點${left.length?`，${left.length} 個${mustLeft?"（含一定要去）":""}這次排不下`:""}`:"這次沒有排得下的地點"); }
-  if(ok){ if(auto){} else if(added) toast(`已加入 ${added} 個地點到行程${skipped?`，${skipped} 個先不排`:""}`); else if(skipped) toast("請先選要排在哪一天"); days.forEach(d=>scheduleLegs(d)); setTimeout(renderWishes,300); }
+  if(ok){ if(auto){} else if(added) toast(`已加入 ${added} 個地點到行程${movedN?`（${movedN} 個為了不重疊調整了時間）`:""}${skipped?`，${skipped} 個先不排`:""}`); else if(skipped) toast("請先選要排在哪一天"); days.forEach(d=>scheduleLegs(d)); setTimeout(renderWishes,300); }
 }
 
 /* ---------- shopping lists: must-buy + recommended, each item with a note ---------- */
@@ -1555,6 +1629,29 @@ async function syncPhotosToDrive(day,files,big){
 }
 
 
+/* ---------- AI 使用量（Worker 自己記的次數，Gemini 不提供剩餘額度） ---------- */
+async function loadAiUsage(){
+  const el=$("aiUsage"); if(!el) return;
+  if(!AI_PROXY_URL){ el.innerHTML=`<p class="sub">還沒有設定 AI 中繼伺服器。</p>`; return; }
+  el.innerHTML=`<p class="sub">讀取中…</p>`;
+  let u; try{ const token=await auth.currentUser.getIdToken(); const r=await fetch(AI_PROXY_URL.replace(/\/$/,"")+"/usage",{method:"POST",headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json",...keyHeader()},body:"{}"}); u=await r.json(); if(!r.ok) throw {code:u?.error||"http_"+r.status}; }
+  catch(e){ if($("aiUsage")) $("aiUsage").innerHTML=`<p class="msg">${esc(aiError(e))}</p>`; return; }
+  const box=$("aiUsage"); if(!box) return;
+  const reset=new Date(u.resetAt), rs=`${reset.getMonth()+1}/${reset.getDate()} ${String(reset.getHours()).padStart(2,"0")}:${String(reset.getMinutes()).padStart(2,"0")}`;
+  if(!u.enabled){ box.innerHTML=`<p class="sub">還沒開啟用量統計。建立者到 Cloudflare 建立一個 KV（名稱例如 <b>trip-usage</b>），在 Worker 的「Bindings」綁定成 <code>USAGE</code> 就會開始記錄；也會同時啟用「每人每天最多 ${u.quota?.perPerson||40} 次」的限制。</p><p class="sub">每天的額度在台灣時間 ${rs.split(" ")[1]} 重置。</p>`; return; }
+  const d=u.day||{}, m=u.month||{}, q=u.quota||{}, models=d.models||{}, mainN=models[u.main]||0;
+  const bar=(n,max)=>{ const p=max?Math.min(100,n/max*100):0; const cls=p>=90?"bad":p>=70?"warn":""; return `<div class="bar thin"><i class="${cls}" style="width:${p}%"></i></div>`; };
+  const pct=(n,max)=>max?`${Math.round(n/max*100)}%`:"";
+  const others=Object.entries(models).filter(([k])=>k!==u.main);
+  box.innerHTML=`<div class="use-row"><span>今天全家用了 <b class="num">${d.ok||0}</b> 次 AI</span><span class="sub">${(d.tokens||0)>=1e4?`約 ${Math.round(d.tokens/1e3)/10} 萬`:`${d.tokens||0}`} tokens</span></div>
+    <div class="use-item"><div class="use-row"><span>主要模型 <code>${esc(u.main)}</code></span><span class="num">${mainN}${q.daily?` / ${q.daily} 次・<b>${pct(mainN,q.daily)}</b>`:" 次"}</span></div>${q.daily?bar(mainN,q.daily):`<p class="sub" style="margin:2px 0 0">到 Cloudflare 的 Worker 加上變數 <code>AI_DAILY_QUOTA</code>（填 AI Studio 上這個模型的每日上限），就會顯示已用 %。</p>`}</div>
+    ${others.length?`<p class="sub" style="margin:4px 0">主要模型忙碌時改用的備用模型：${others.map(([k,v])=>`${esc(k)} ${v} 次`).join("、")}（各自有額度）</p>`:""}
+    ${(d.busy||0)?`<p class="sub" style="margin:4px 0">今天 Gemini 忙碌、自動換模型 ${d.busy} 次${d.fail?`，${d.fail} 次沒有成功`:""}</p>`:""}
+    <div class="use-item"><div class="use-row"><span>本月 Google 搜尋查證</span><span class="num">${m.queries||0} / ${q.searchMonthly||5000} 次・<b>${pct(m.queries||0,q.searchMonthly||5000)}</b></span></div>${bar(m.queries||0,q.searchMonthly||5000)}</div>
+    <div class="use-item"><div class="use-row"><span>這支手機今天用了</span><span class="num">${u.me||0} / ${q.perPerson||40} 次・<b>${pct(u.me||0,q.perPerson||40)}</b></span></div>${bar(u.me||0,q.perPerson||40)}</div>
+    <p class="sub" style="margin:6px 0 0">每天的額度在 <b>${rs}</b>（台灣時間）重置。這是 App 自己記錄的次數，可能和 Google 的實際計算有一點差距，最準確的用量請看 Google AI Studio。</p>`;
+}
+
 /* ---------- 當地節日活動（AI 先用 Google 搜尋查證） ---------- */
 const EV_REC={go:["推薦去","ev-go"],ok:["可以去","ev-ok"],avoid:["不建議","ev-no"]};
 const EV_TYPE={festival:"祭典節慶",holiday:"假日",seasonal:"季節活動",event:"活動"};
@@ -1967,6 +2064,7 @@ function settingsSheet(){
     <p class="est">自動儲存是整趟旅行共用的設定。版本都在「日誌 → 專案存檔」，可以隨時還原；手動按 💾 存的版本不會被自動刪掉。按 💾 存的版本也會照下面的設定備份到 Google 雲端硬碟；自動儲存的版本只存在 App 裡。</p>
     <div class="set-sub"><h4>Google 雲端硬碟備份</h4><div id="drivePanel2"></div></div>
   </section>
+  <section class="set-sec"><h3>✨ AI 使用量 <button class="link" type="button" data-aiusage style="font-size:13px;margin-left:6px">重新整理</button></h3><div id="aiUsage"><p class="sub">讀取中…</p></div></section>
   <section class="set-sec"><h3>🔒 我的記帳帳本</h3><p class="sub">「記帳」頁的個人記帳存在你自己的帳本，只有知道帳本代碼的人才看得到。換手機、或從主畫面和 Safari 分開打開時，把代碼貼到另一邊就能看到同一本帳。</p><div class="code-box">${esc(ensureLedgerKey())}</div><div class="row-actions"><button class="ghost" type="button" data-ledgercopy>複製帳本代碼</button></div><label class="sub" for="ledgerIn" style="display:block;margin-top:8px">使用另一個帳本代碼</label><div class="row-actions"><input id="ledgerIn" placeholder="貼上帳本代碼" autocomplete="off" autocapitalize="off" spellcheck="false" style="flex:1;min-width:0"><button class="primary sm" type="button" data-ledgeruse>使用</button></div></section>
   <section class="set-sec"><h3>顯示（只影響這支手機）</h3>
     <div class="sub" style="margin-bottom:6px">外觀</div>${chips("theme",[["auto","跟隨系統"],["light","淺色"],["dark","深色"]],prefs.theme)}
@@ -1974,6 +2072,7 @@ function settingsSheet(){
   </section>
   ${LINK_MODE?`<section class="set-sec"><h3>家庭連結</h3><p class="sub">用這個連結打開就能使用，不用登入。拿到連結的人都能看和修改這趟旅行，只傳給家人。</p><div class="code-box">${esc(familyLink())}</div><div class="row-actions"><button class="primary sm" type="button" data-copylink>複製家庭連結</button><button class="ghost" type="button" data-leavelink>這支手機不再使用</button></div></section>`:""}${LINK_MODE?"":`<section class="set-sec"><h3>帳號</h3><div class="row-actions">${S.user?.photoURL?`<img class="avatar" src="${esc(S.user.photoURL)}" alt="" referrerpolicy="no-referrer">`:""}<span class="sub" style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(S.user?.email||"")}</span><button class="ghost" type="button" data-signout>登出</button></div></section>`}
   <p class="est" style="text-align:center;margin-top:18px">家庭旅遊手帳</p>`,"settings");
+  loadAiUsage();
   const nf=$("nameF"); if(nf) nf.onsubmit=async e=>{ e.preventDefault(); const n=$("set_name").value.trim().slice(0,20); if(!n){ toast("請輸入名稱"); return; } if(await guard(()=>setDoc(doc(db,"users",S.user.uid),{nick:n},{merge:true}))){ toast(`之後會顯示「${n}」`); render(); } };
   let cfg=autoCfg();
   const saveAuto=async patch=>{ if(!S.trip) return; cfg={...cfg,...patch}; S.trip={...S.trip,autosave:cfg}; await guard(()=>put("trip",null,{...S.trip,autosave:cfg})); };
@@ -1998,6 +2097,7 @@ document.addEventListener("click",async e=>{
   if(T("[data-suggest]")){ suggestSheet(); return; }
   if(T("[data-events]")){ evTab=S.day; eventsSheet(); return; }
   if(T("[data-evrun]")){ runEvents(); return; }
+  if((el=T("[data-fixov]"))){ el.disabled=true; el.textContent="調整中…"; await fixOverlaps(Number(el.dataset.fixov)); return; }
   if((el=T("[data-evtab]"))){ evTab=Number(el.dataset.evtab); renderEvents(); return; }
   if((el=T("[data-evwish]"))){ evToWish(el.dataset.evwish); return; }
   if((el=T("[data-reason]"))){ const inp=$("d_note"); if(!inp) return; const parts=inp.value.split("、").map(x=>x.trim()).filter(Boolean); const r=el.dataset.reason; const i=parts.indexOf(r); if(i>=0) parts.splice(i,1); else parts.push(r); inp.value=parts.join("、"); el.setAttribute("aria-pressed",i<0); return; }
@@ -2050,6 +2150,7 @@ document.addEventListener("click",async e=>{
   if(T("[data-docs]")){ docsSheet(); return; }
   if((el=T("[data-doc]"))){ docView(el.dataset.doc); return; }
   if(T("[data-docsback]")){ docsSheet(); return; }
+  if(T("[data-aiusage]")){ loadAiUsage(); return; }
   if(T("[data-ledgercopy]")){ copyText(LEDGER_KEY,"已複製帳本代碼"); return; }
   if(T("[data-ledgeruse]")){ const v=($("ledgerIn")?.value||"").trim(); if(!/^[A-Za-z0-9_-]{20,80}$/.test(v)){ toast("帳本代碼不正確，請完整貼上"); return; } setLedgerKey(v); closeSheet(); toast("已切換到這個帳本"); return; }
   if((el=T("[data-tlike]"))){ el.setAttribute("aria-pressed",el.getAttribute("aria-pressed")!=="true"); return; }

@@ -448,3 +448,7 @@ details.copy-box:not([open]){padding-block:12px}
 .ev-card{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:2px;min-width:0}
 .ev-top{display:flex;gap:8px;justify-content:space-between;align-items:flex-start}.ev-top b{overflow-wrap:anywhere}
 .ev-tips,.ev-src{margin:0;padding-left:18px;font-size:14px}.ev-src a{overflow-wrap:anywhere}
+.use-row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}
+.use-item{margin:8px 0}.use-item .bar{margin-top:4px}
+#aiUsage code{font-size:12px;overflow-wrap:anywhere}
+.ov-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}
