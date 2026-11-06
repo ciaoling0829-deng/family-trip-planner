@@ -505,3 +505,8 @@ section[data-tab="talk"]>.doc-bar{margin-bottom:12px}
 button.area-w{border:0}
 .area-go{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.area-go select{flex:1 1 180px;min-width:0}
 .add-fold{border:1px dashed var(--accent);border-radius:12px;padding:10px 12px}.add-fold>summary{cursor:pointer;color:var(--accent)}
+.map-pin.done span{width:auto;min-width:30px;height:22px;border-radius:6px;padding:0 4px;background:#fff;color:var(--dc);border:2px solid var(--dc);font-size:11px;font-weight:800;box-sizing:border-box;opacity:.92}
+.area-legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;color:var(--muted);margin-top:6px}
+.area-legend span{display:inline-flex;align-items:center;gap:5px}
+.lg-dot{width:14px;height:14px;border-radius:50%;background:var(--accent);display:inline-block}
+.lg-day{font-style:normal;font-size:10px;font-weight:800;color:var(--dc);border:2px solid var(--dc);border-radius:5px;padding:0 3px;background:#fff}

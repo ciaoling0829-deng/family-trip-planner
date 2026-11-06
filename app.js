@@ -1061,6 +1061,8 @@ function busyOf(day,skip){
   return S.items.filter(x=>x.day===day&&x.time&&!(skip&&skip.has(x.id))&&!(x.autoStay&&(x.stayRole==="depart"||x.stayRole==="return"))).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b]; });
 }
 /* ---------- 依區域分組（不需要 AI）：把想去的地點依交通時間分區，自己決定哪一區排哪一天 ---------- */
+const DAY_COLORS=["#16241F","#3B6FA8","#B04C6B","#C0702E","#7A5AA6","#4E8C8A","#8A6D1F"];
+const placedItems = () => S.items.filter(x=>x.time&&!isFlight(x)&&!x.flightItem&&!x.autoStay&&x.cat!=="stay"&&x.cat!=="move");
 const AREA_COLORS=["#2F6B55","#3B6FA8","#C0702E","#B04C6B","#7A5AA6","#4E8C8A","#8A6D1F","#5E6E68"];
 const wishGeo = w => { const g=w?.geo; if(g&&Number.isFinite(+g.lat)&&Number.isFinite(+g.lng)) return {lat:+g.lat,lng:+g.lng}; return geoGet(wishQuery(w)); };
 const itemGeo = x => { const g=x?.geo; if(g&&Number.isFinite(+g.lat)&&Number.isFinite(+g.lng)) return {lat:+g.lat,lng:+g.lng}; return geoGet(stopQuery(x)); };
@@ -1097,11 +1099,14 @@ function suggestDay(g,taken){
 let areaSig="", areaMap=null, areaBusy=false, areaStep="";
 async function renderAreas(force){
   const box=$("areaBox"); if(!box||!S.trip) return;
-  const open=wishOpen();
-  if(!open.length){ box.innerHTML=""; areaSig=""; return; }
-  const sig=open.map(w=>w.id+":"+(w.geo?`${w.geo.lat},${w.geo.lng}`:"")+":"+wishQuery(w)).join("|")+"|"+S.items.length;
+  const open=wishOpen(), done=placedItems();
+  if(!open.length&&!done.length){ box.innerHTML=""; areaSig=""; return; }
+  const sig=open.map(w=>w.id+":"+(w.geo?`${w.geo.lat},${w.geo.lng}`:"")+":"+wishQuery(w)).join("|")+"|"+done.map(x=>x.id+x.day+x.time).join(",");
   if(sig===areaSig&&!force) return; areaSig=sig;
   const need=open.filter(w=>!wishGeo(w)&&!geoKnown(wishQuery(w)));
+  const needI=done.filter(x=>!itemGeo(x)&&!geoKnown(stopQuery(x)));
+  if(!need.length&&needI.length&&!areaBusy){ areaBusy=true; box.innerHTML=`<div class="empty"><span class="spinner"></span><span id="areaStep">正在找已排行程的位置…</span></div>`;
+    await geoResolve(needI.map(stopRef),t=>{ const s=$("areaStep"); if(s) s.textContent=t; }); areaBusy=false; areaSig=""; return renderAreas(true); }
   if(need.length&&!areaBusy){ areaBusy=true; box.innerHTML=`<div class="empty"><span class="spinner"></span><span id="areaStep">正在找地點位置…</span></div>`;
     await geoResolve(need.map(wishRef),t=>{ const s=$("areaStep"); if(s) s.textContent=t; });
     areaBusy=false;
@@ -1110,8 +1115,10 @@ async function renderAreas(force){
     areaSig=""; return renderAreas(true); }
   const {groups,unknown}=clusterWishes(open); const n=S.trip.days||1, ro=S.canWrite===false;
   const dayOpt=(sel)=>Array.from({length:n},(_,i)=>{ const its=dayLoad(i); return `<option value="${i}" ${i===sel?"selected":""}>Day ${i+1} ${dLabel(dayDate(i))}${its.length?`（已有 ${its.length} 個）`:"（空）"}</option>`; }).join("");
+  const dn=[...new Set(done.map(x=>x.day))].sort((a,b)=>a-b);
   box.innerHTML=`<div class="area-map" id="areaMap"></div>
-    <p class="sub" style="margin:6px 0 0">同一個顏色是同一區（彼此交通大約 25 分鐘內）。選好要排哪一天，按「排進這天」，App 會依路線順序找不衝突的時間。</p>
+    <div class="area-legend">${groups.length?`<span><i class="lg-dot"></i>數字：還沒排的區</span>`:""}${dn.map(d=>`<span><i class="lg-day" style="--dc:${DAY_COLORS[d%DAY_COLORS.length]}">D${d+1}</i>已排在 Day ${d+1}（${done.filter(x=>x.day===d).length}）</span>`).join("")}</div>
+    ${groups.length||unknown.length?`<p class="sub" style="margin:6px 0 0">同一個顏色是同一區（彼此交通大約 25 分鐘內）。選好要排哪一天，按「排進這天」，App 會依路線順序找不衝突的時間。</p>`:`<p class="sub" style="margin:6px 0 0">想去的地點都排進行程了，地圖上是每一天排好的地點。</p>`}
     ${(()=>{ const taken=new Set(); return groups.map((g,k)=>{ const sd=suggestDay(g,taken); taken.add(sd); const mins=g.reduce((s,w)=>s+(DEF_DUR[w.cat]||60),0);
       return `<div class="area-card" style="--ac:${AREA_COLORS[k%AREA_COLORS.length]}"><div class="area-h"><span class="area-dot"></span><b>第 ${k+1} 區</b><span class="sub">${g.length} 個地點・停留約 ${Math.round(mins/30)/2} 小時</span></div>
         <div class="area-ws">${routeOrder(g,null).map(w=>`<span class="area-w">${prioOf(w)==="must"?"⭐ ":""}${esc(w.name)}</span>`).join("")}</div>
@@ -1129,6 +1136,9 @@ async function drawAreaMap(groups){
   const all=[];
   groups.forEach((g,k)=>g.forEach(w=>{ const p=wishGeo(w); if(!p) return; all.push([p.lat,p.lng]);
     L.marker([p.lat,p.lng],{icon:L.divIcon({className:"map-pin",html:`<span style="background:${AREA_COLORS[k%AREA_COLORS.length]}">${k+1}</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(areaMap).bindPopup(`第 ${k+1} 區：${esc(w.name)}`); }));
+  // 已排進行程的地點：白底、用 Day 的顏色框起來，標「D1」
+  for(const x of placedItems()){ const p=itemGeo(x); if(!p) continue; all.push([p.lat,p.lng]); const c=DAY_COLORS[x.day%DAY_COLORS.length];
+    L.marker([p.lat,p.lng],{icon:L.divIcon({className:"map-pin done",html:`<span style="--dc:${c}">D${x.day+1}</span>`,iconSize:[30,22],iconAnchor:[15,11]})}).addTo(areaMap).bindPopup(`已排 Day ${x.day+1} ${esc(x.time||"")}：${esc(x.title)}`); }
   for(let d=0;d<(S.trip?.days||1);d++){ const h=dp(d).hotelAddr&&!isUrl(dp(d).hotelAddr)?geoGet(dp(d).hotelAddr):null; if(h){ L.marker([h.lat,h.lng],{icon:L.divIcon({className:"map-pin",html:`<span style="background:#16241F">🏨</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(areaMap).bindPopup(esc(dp(d).hotel||"住宿")); all.push([h.lat,h.lng]); break; } }
   if(all.length) areaMap.fitBounds(L.latLngBounds(all).pad(0.2),{maxZoom:15});
 }
