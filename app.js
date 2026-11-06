@@ -926,17 +926,19 @@ let wp={list:[],res:null,busy:false,err:"",summary:""};
 function wishesSheet(){
   const ro=S.canWrite===false;
   openSheet(`<h2>想去清單</h2>
-  <p class="sub" style="margin-top:-6px">先把想去的餐廳和地點收集起來，再讓 AI 依地點和營業時間，建議排在第幾天的什麼時候。全家都可以一起加。</p>
-  ${ro?"":`<form class="form" id="wishF">
+  <p class="sub" style="margin-top:-6px">先把想去的餐廳和地點收集起來。App 會依交通時間把附近的地點分成一區，你決定哪一區排哪一天，App 再排出不衝突的時間。全家都可以一起加。</p>
+  ${ro?"":`<details class="fold add-fold" ${(S.wishes||[]).length?"":"open"}><summary><b>＋ 新增想去的地點</b></summary><form class="form" id="wishF" style="margin-top:10px">
     <label>名稱<input id="w_name" required placeholder="例如：牛舌 喜助、松島魚市場" autocomplete="off"></label>
     <div><div class="sub" style="margin-bottom:6px">類型</div><div class="tags" id="w_cats">${WCATS.map(([k,n])=>`<button type="button" data-wcat="${k}" aria-pressed="${k===wishCat}">${n}</button>`).join("")}</div></div>
     <div><div class="sub" style="margin-bottom:6px">有多想去</div><div class="tags" id="w_prios">${PRIOS.map(([k,n])=>`<button type="button" data-wprio="${k}" aria-pressed="${k===wishPrio}">${k==="must"?"⭐ ":""}${n}</button>`).join("")}</div></div>
     <label>地址或 Google 地圖連結（選填，有填會排得更準）<input id="w_addr" placeholder="貼上地址或 Google 地圖的「分享」連結"></label>
     <label>想什麼時候去、備註（選填）<input id="w_note" placeholder="例如：想吃晚餐、要預約、下雨備案、週末人多"></label>
     <div class="sheet-actions"><button class="primary" type="submit">加入清單</button></div>
-  </form>`}
+  </form></details>`}
   <div class="wp-head"><h3>還沒排進行程 <span class="sub num" id="wishOpenN"></span></h3></div>
-  ${ro?"":`<div class="wp-tools">${paceChips()}<div class="wp-go"><button class="primary sm" type="button" data-wishauto id="wpAuto">⚡ 一鍵排進行程</button><button class="ghost" type="button" data-wishplan id="wpGo">先看建議</button></div><p class="est" style="margin:0">一鍵排進行程：「一定要去」會全部排入，「想去」只在時間排得下時才插入，排不下的會留在清單裡告訴你原因。</p></div>`}
+  ${ro?"":`<div class="wp-tools">${paceChips()}</div>`}
+  <div class="wp-head" style="margin-top:4px"><h3>📍 依區域分組</h3><button class="link" type="button" data-arearefresh>重新整理</button></div>
+  <div id="areaBox" style="display:grid;gap:10px"></div>
   <div id="wishOut" style="display:grid;gap:10px"></div>
   <div id="wishList" style="display:grid;gap:10px"></div>
   <details class="fold" id="wishDoneBox" style="margin-top:12px"><summary><h3 style="margin:0">已排進行程 <span class="sub num" id="wishDoneN"></span></h3></summary><div id="wishDone" style="display:grid;gap:10px;margin-top:10px"></div></details>`,"wishes");
@@ -967,7 +969,8 @@ function wishEditSheet(id){
     const addr=$("we_addr").value.trim(), note=$("we_note").value.trim();
     const {id:_w,...r}=w;
     const ok=await guard(async()=>{
-      await put("wishes",id,{...r,name,cat,prio,addr,note});
+      const keepGeo=r.geo&&(r.geo.manual||(name===w.name&&addr===(w.addr||"")));
+      const {geo:_g,...r2}=r; await put("wishes",id,{...r2,...(keepGeo?{geo:r.geo}:{}),name,cat,prio,addr,note});
       if(it){ const {id:iid,...ir}=it; const patch={...ir}; if(ir.title===w.name) patch.title=name; if((ir.addr||"")===(w.addr||"")) patch.addr=addr; if(CATS[cat]&&ir.cat===w.cat) patch.cat=cat;
         if(patch.title!==ir.title||patch.addr!==ir.addr||patch.cat!==ir.cat){ await put("items",iid,patch); scheduleLegs(it.day); } }
     });
@@ -985,6 +988,7 @@ function wishCard(w){
     <div class="row-actions">
       ${it?`<button class="ghost" type="button" data-wishgo="${esc(it.id)}">看這天的行程</button>`:(ro?"":`<button class="ghost" type="button" data-wishmanual="${esc(w.id)}">自己排</button>`)}
       <a class="link" href="${esc(map)}" target="_blank" rel="noopener noreferrer">地圖 ↗</a>
+      ${ro||it?"":`<button class="link" type="button" data-wishgeo="${esc(w.id)}">${wishGeo(w)?"📍 位置":"⚠️ 設定位置"}</button>`}
       ${ro?"":`<button class="link" type="button" data-wishedit="${esc(w.id)}">✏️ 編輯</button>`}
       ${ro||it?"":`<button class="link" type="button" data-wishprio="${esc(w.id)}">${prioOf(w)==="must"?"改成想去":"改成一定要去"}</button><button class="link" type="button" data-wishrm="${esc(w.id)}" style="color:var(--bad)">刪除</button>`}
     </div>
@@ -999,7 +1003,7 @@ function renderWishes(){
   const L=$("wishList"); if(L) L.innerHTML=open.length?open.map(wishCard).join(""):`<p class="sub" style="margin:0">${(S.wishes||[]).length?"都排進行程了。":"清單是空的。在上面輸入想去的地方，或在「找餐廳景點」的推薦裡按「♡ 收藏」。"}</p>`;
   const D=$("wishDone"); if(D) D.innerHTML=done.map(wishCard).join("");
   const box=$("wishDoneBox"); if(box) box.hidden=!done.length;
-  renderWishPlan();
+  renderWishPlan(); renderAreas();
 }
 function renderWishPlan(){
   const out=$("wishOut"); if(!out) return;
@@ -1056,17 +1060,124 @@ const isPoint = x => x.cat!=="move" && x.cat!=="stay";
 function busyOf(day,skip){
   return S.items.filter(x=>x.day===day&&x.time&&!(skip&&skip.has(x.id))&&!(x.autoStay&&(x.stayRole==="depart"||x.stayRole==="return"))).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b]; });
 }
+/* ---------- 依區域分組（不需要 AI）：把想去的地點依交通時間分區，自己決定哪一區排哪一天 ---------- */
+const AREA_COLORS=["#2F6B55","#3B6FA8","#C0702E","#B04C6B","#7A5AA6","#4E8C8A","#8A6D1F","#5E6E68"];
+const wishGeo = w => { const g=w?.geo; if(g&&Number.isFinite(+g.lat)&&Number.isFinite(+g.lng)) return {lat:+g.lat,lng:+g.lng}; return geoGet(wishQuery(w)); };
+const itemGeo = x => { const g=x?.geo; if(g&&Number.isFinite(+g.lat)&&Number.isFinite(+g.lng)) return {lat:+g.lat,lng:+g.lng}; return geoGet(stopQuery(x)); };
+function clusterWishes(list){
+  // 交通 25 分鐘內的連在一起，同一區裡最遠的兩點不超過 50 分鐘
+  const nodes=list.map(w=>({w,p:wishGeo(w)})).filter(x=>x.p); const groups=nodes.map(x=>[x]);
+  const link=(a,b)=>{ let mn=1e9,mx=0; for(const x of a) for(const y of b){ const t=travelMin(x.p,y.p); mn=Math.min(mn,t); mx=Math.max(mx,t); } return {mn,mx}; };
+  for(let changed=true;changed;){ changed=false; let best=null;
+    for(let i=0;i<groups.length;i++) for(let j=i+1;j<groups.length;j++){ const {mn,mx}=link(groups[i],groups[j]); if(mn<=25&&mx<=FAR_MIN&&(!best||mn<best.mn)) best={i,j,mn}; }
+    if(best){ groups[best.i]=groups[best.i].concat(groups[best.j]); groups.splice(best.j,1); changed=true; } }
+  const unknown=list.filter(w=>!wishGeo(w));
+  const sorted=groups.map(g=>g.map(x=>x.w)).sort((a,b)=>b.filter(w=>prioOf(w)==="must").length-a.filter(w=>prioOf(w)==="must").length||b.length-a.length);
+  return {groups:sorted,unknown};
+}
+function routeOrder(ws,start){
+  // 從起點（住宿或這天最後一站）開始，每次走到最近的下一個點
+  const left=ws.map(w=>({w,p:wishGeo(w)})); const out=[]; let cur=start;
+  while(left.length){ let k=0; if(cur){ let best=1e9; left.forEach((x,i)=>{ const t=x.p?travelMin(cur,x.p):999; if(t<best){ best=t; k=i; } }); } const x=left.splice(k,1)[0]; out.push(x.w); cur=x.p||cur; }
+  // 餐廳往用餐時間靠：晚餐放後面
+  return out.sort((a,b)=>(/晚餐|晚上|夜景|宵夜/.test(a.note||"")?1:0)-(/晚餐|晚上|夜景|宵夜/.test(b.note||"")?1:0));
+}
+const areaName = g => { const n=g.map(w=>w.name); return n.length<=2?n.join("、"):`${n.slice(0,2).join("、")} 等 ${n.length} 個`; };
+function dayLoad(i){ const its=S.items.filter(x=>x.day===i&&x.time&&!x.autoStay&&x.cat!=="stay"&&!isFlight(x)); return its; }
+function suggestDay(g,taken){
+  // 建議排哪天：已經有附近行程的那天最好，其次是空的日子
+  const n=S.trip?.days||1, c=g.map(wishGeo).filter(Boolean); let best=null;
+  for(let d=0;d<n;d++){ const its=dayLoad(d), pts=its.map(itemGeo).filter(Boolean);
+    const full=its.some(x=>x.end&&toMin(x.end)-toMin(x.time)>=480);
+    const near=pts.length&&c.length?Math.min(...c.flatMap(p=>pts.map(q=>travelMin(p,q)))):null;
+    const score=full?1e6:near!=null?(near<=FAR_MIN?near:300+near):(its.length?150+its.length*20:100+d)+(taken&&taken.has(d)?400:0);
+    if(!best||score<best.score) best={d,score}; }
+  return best?best.d:0;
+}
+let areaSig="", areaMap=null, areaBusy=false, areaStep="";
+async function renderAreas(force){
+  const box=$("areaBox"); if(!box||!S.trip) return;
+  const open=wishOpen();
+  if(!open.length){ box.innerHTML=""; areaSig=""; return; }
+  const sig=open.map(w=>w.id+":"+(w.geo?`${w.geo.lat},${w.geo.lng}`:"")+":"+wishQuery(w)).join("|")+"|"+S.items.length;
+  if(sig===areaSig&&!force) return; areaSig=sig;
+  const need=open.filter(w=>!wishGeo(w)&&!geoKnown(wishQuery(w)));
+  if(need.length&&!areaBusy){ areaBusy=true; box.innerHTML=`<div class="empty"><span class="spinner"></span><span id="areaStep">正在找地點位置…</span></div>`;
+    await geoResolve(need.map(wishRef),t=>{ const s=$("areaStep"); if(s) s.textContent=t; });
+    areaBusy=false;
+    // 找到的位置存到地點上，全家共用，下次不用再找
+    if(S.canWrite!==false) for(const w of need){ const p=geoGet(wishQuery(w)); if(p){ const {id,...r}=w; try{ await put("wishes",id,{...r,geo:{lat:p.lat,lng:p.lng}}); }catch(e){ console.warn(e); } } }
+    areaSig=""; return renderAreas(true); }
+  const {groups,unknown}=clusterWishes(open); const n=S.trip.days||1, ro=S.canWrite===false;
+  const dayOpt=(sel)=>Array.from({length:n},(_,i)=>{ const its=dayLoad(i); return `<option value="${i}" ${i===sel?"selected":""}>Day ${i+1} ${dLabel(dayDate(i))}${its.length?`（已有 ${its.length} 個）`:"（空）"}</option>`; }).join("");
+  box.innerHTML=`<div class="area-map" id="areaMap"></div>
+    <p class="sub" style="margin:6px 0 0">同一個顏色是同一區（彼此交通大約 25 分鐘內）。選好要排哪一天，按「排進這天」，App 會依路線順序找不衝突的時間。</p>
+    ${(()=>{ const taken=new Set(); return groups.map((g,k)=>{ const sd=suggestDay(g,taken); taken.add(sd); const mins=g.reduce((s,w)=>s+(DEF_DUR[w.cat]||60),0);
+      return `<div class="area-card" style="--ac:${AREA_COLORS[k%AREA_COLORS.length]}"><div class="area-h"><span class="area-dot"></span><b>第 ${k+1} 區</b><span class="sub">${g.length} 個地點・停留約 ${Math.round(mins/30)/2} 小時</span></div>
+        <div class="area-ws">${routeOrder(g,null).map(w=>`<span class="area-w">${prioOf(w)==="must"?"⭐ ":""}${esc(w.name)}</span>`).join("")}</div>
+        ${ro?"":`<div class="area-go"><select id="ad_${k}" aria-label="第 ${k+1} 區排在哪一天">${dayOpt(sd)}</select><button class="primary sm" type="button" data-areago="${k}">排進這天</button></div><p class="sub" style="margin:2px 0 0">建議：Day ${sd+1}${dayLoad(sd).length?"（附近已經有行程）":"（還沒有行程）"}</p>`}
+      </div>`; }).join(""); })()}
+    ${unknown.length?`<div class="area-card area-unknown"><div class="area-h"><b>📍 找不到位置</b><span class="sub">${unknown.length} 個</span></div><p class="sub" style="margin:0 0 6px">在地圖上點一下設定位置，才能分區。</p><div class="area-ws">${unknown.map(w=>`<button class="area-w link" type="button" data-wishgeo="${esc(w.id)}">${esc(w.name)}・設定位置</button>`).join("")}</div></div>`:""}`;
+  box._groups=groups;
+  drawAreaMap(groups);
+}
+async function drawAreaMap(groups){
+  let L; try{ L=await loadLeaflet(); }catch{ const m=$("areaMap"); if(m) m.innerHTML=`<p class="sub" style="padding:10px">地圖要有網路才會顯示，分區結果在下面。</p>`; return; }
+  const el=$("areaMap"); if(!el) return; if(areaMap){ try{ areaMap.remove(); }catch{} areaMap=null; }
+  areaMap=L.map(el,{scrollWheelZoom:false,attributionControl:true}).setView([35.68,139.76],11);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'}).addTo(areaMap);
+  const all=[];
+  groups.forEach((g,k)=>g.forEach(w=>{ const p=wishGeo(w); if(!p) return; all.push([p.lat,p.lng]);
+    L.marker([p.lat,p.lng],{icon:L.divIcon({className:"map-pin",html:`<span style="background:${AREA_COLORS[k%AREA_COLORS.length]}">${k+1}</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(areaMap).bindPopup(`第 ${k+1} 區：${esc(w.name)}`); }));
+  for(let d=0;d<(S.trip?.days||1);d++){ const h=dp(d).hotelAddr&&!isUrl(dp(d).hotelAddr)?geoGet(dp(d).hotelAddr):null; if(h){ L.marker([h.lat,h.lng],{icon:L.divIcon({className:"map-pin",html:`<span style="background:#16241F">🏨</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(areaMap).bindPopup(esc(dp(d).hotel||"住宿")); all.push([h.lat,h.lng]); break; } }
+  if(all.length) areaMap.fitBounds(L.latLngBounds(all).pad(0.2),{maxZoom:15});
+}
+async function areaGo(k){
+  const g=$("areaBox")?._groups?.[k]; if(!g) return; const d=Number($("ad_"+k)?.value||0);
+  const its=dayLoad(d).sort((a,b)=>toMin(a.time)-toMin(b.time)); const last=its.length?itemGeo(its[its.length-1]):null;
+  const start=last||(dp(d).hotelAddr&&!isUrl(dp(d).hotelAddr)?geoGet(dp(d).hotelAddr):null);
+  const order=routeOrder(g,start);
+  const res=makeSlots(order.map((w,i)=>({key:i,w:{...w,prio:"must"},r:{day:d+1,time:/晚餐|晚上|夜景|宵夜/.test(w.note||"")?"18:00":/午餐|中午/.test(w.note||"")?"12:00":"",duration:""}})),{forceDay:d,chain:true,keepOrder:true});
+  let ok=0; const fail=[];
+  const done=await guard(async()=>{ for(let i=0;i<order.length;i++){ const w=order[i], r=res[i]; if(!r?.day){ fail.push(w.name); continue; }
+    const p=wishGeo(w); await put("items",null,{...wishToItem(w,d,r.time,{duration:`${r.len||DEF_DUR[w.cat]||60}分`}),...(p?{geo:p}:{})}); ok++; } });
+  if(done){ scheduleLegs(d); toast(`已把 ${ok} 個地點排進 Day ${d+1}${fail.length?`；${fail.join("、")} 這天排不下，請換一天`:""}`); areaSig=""; }
+}
+let geoPick=null;
+async function wishGeoSheet(id){
+  const w=(S.wishes||[]).find(x=>x.id===id); if(!w) return; const cur=wishGeo(w);
+  openSheet(`<h2>📍 設定「${esc(w.name)}」的位置</h2>
+    <p class="sub" style="margin-top:-6px">在地圖上<b>點一下</b>放大頭針，或在下面輸入地址、當地語言的名稱查詢（日本的地點用日文比較容易找到）。</p>
+    <div class="row-actions"><input id="gq" placeholder="例如：浅草寺、東京都台東区浅草2-3-1" value="${esc(w.addr&&!isUrl(w.addr)?w.addr:"")}" style="flex:1;min-width:0"><button class="ghost sm" type="button" id="gqGo">查詢</button></div>
+    <p class="sub" id="gqMsg" style="margin:4px 0"></p>
+    <div class="area-map" id="geoMap" style="aspect-ratio:1/1"></div>
+    <div class="sheet-actions"><button class="primary" type="button" id="geoSave" ${cur?"":"disabled"}>儲存位置</button><button class="ghost" type="button" data-wishback>返回想去清單</button></div>`,"wishgeo");
+  geoPick=cur; let L, mk=null;
+  try{ L=await loadLeaflet(); }catch{ $("gqMsg").textContent="地圖要有網路才能顯示。"; return; }
+  const center=cur||S.items.map(itemGeo).find(Boolean)||(S.wishes||[]).map(wishGeo).find(Boolean)||{lat:35.68,lng:139.76};
+  const m=L.map("geoMap",{scrollWheelZoom:false}).setView([center.lat,center.lng],cur?16:12);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(m);
+  const place=p=>{ geoPick=p; if(mk) mk.setLatLng([p.lat,p.lng]); else mk=L.marker([p.lat,p.lng]).addTo(m); $("geoSave").disabled=false; };
+  if(cur) place(cur);
+  m.on("click",e=>{ place({lat:e.latlng.lat,lng:e.latlng.lng}); $("gqMsg").textContent="已放好大頭針，按「儲存位置」。"; });
+  $("gqGo").onclick=async()=>{ const q=$("gq").value.trim(); if(!q) return; $("gqMsg").textContent="查詢中…";
+    try{ const p=await nominatim(q); if(p){ place(p); m.setView([p.lat,p.lng],16); $("gqMsg").textContent="找到了，位置不對的話可以直接在地圖上點正確的地方。"; } else $("gqMsg").textContent="找不到，換成日文名稱或地址試試，或直接在地圖上點。"; }
+    catch{ $("gqMsg").textContent="查詢失敗，請直接在地圖上點。"; } };
+  $("geoSave").onclick=async()=>{ if(!geoPick) return; const {id:_i,...r}=w;
+    if(await guard(()=>put("wishes",id,{...r,geo:{lat:+geoPick.lat.toFixed(6),lng:+geoPick.lng.toFixed(6),manual:true}}))){ toast("已儲存位置"); areaSig=""; wishesSheet(); } };
+}
+
 // 估計兩地之間的大眾運輸時間（分鐘）：等車轉乘約 8 分鐘＋每公里約 4 分鐘
 const FAR_MIN=50;
 const travelMin=(p,q)=>Math.round(8+km(p,q)*4);
-function makeSlots(entries,{skip}={}){
+function makeSlots(entries,{skip,forceDay,chain,keepOrder}={}){
   // entries: [{key, w, r}]；回傳每個 key 的 {day(1 起), time, moved, note}
   const rule=PACE_RULE[paceOf()]||PACE_RULE.relaxed, n=S.trip?.days||1, out={};
   // 每段行程的時間和位置；位置用來估計前後要留多少交通時間
   const anch=x=>x.autoStay&&(x.stayRole==="depart"||x.stayRole==="return");
-  const busy=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&x.time&&!(skip&&skip.has(x.id))&&!anch(x)).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b,isFlight(x)||String(x.title).includes(STAY_TBD)?null:geoGet(stopQuery(x))]; }));
+  const busy=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&x.time&&!(skip&&skip.has(x.id))&&!anch(x)).map(x=>{ const a=toMin(x.time); let b=x.end?toMin(x.end):a+(DEF_DUR[x.cat]||60); if(b<=a) b=a+30; return [a,b,isFlight(x)||String(x.title).includes(STAY_TBD)?null:itemGeo(x)]; }));
   // 每天已經有的景點位置（不含住宿：每天都回同一間住宿，算進來會讓地點又被平均分散）
-  const pts=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&x.time&&!isFlight(x)&&!x.autoStay&&x.cat!=="stay"&&!(skip&&skip.has(x.id))&&!String(x.title).includes(STAY_TBD)).map(x=>geoGet(stopQuery(x))).filter(Boolean));
+  const pts=Array.from({length:n},(_,i)=>S.items.filter(x=>x.day===i&&x.time&&!isFlight(x)&&!x.autoStay&&x.cat!=="stay"&&!(skip&&skip.has(x.id))&&!String(x.title).includes(STAY_TBD)).map(x=>itemGeo(x)).filter(Boolean));
   const hotelOf=i=>dp(i).hotelAddr&&!isUrl(dp(i).hotelAddr)?geoGet(dp(i).hotelAddr):null;
   const nearest=(d,p)=>{ if(!p||!pts[d].length) return null; return Math.min(...pts[d].map(q=>travelMin(p,q))); };
   let curHere=null;   // 目前正在排的地點位置
@@ -1086,15 +1197,18 @@ function makeSlots(entries,{skip}={}){
     }
     return null;
   };
-  const order=entries.map((e,k)=>({...e,k})).sort((a,b)=>(prioOf(a.w)==="must"?0:1)-(prioOf(b.w)==="must"?0:1)||((a.r.day||99)-(b.r.day||99))||((a.r.time?toMin(a.r.time):9999)-(b.r.time?toMin(b.r.time):9999)));
+  const lastEnd={}, lastPt={};
+  const order=keepOrder?entries.map((e,k)=>({...e,k})):entries.map((e,k)=>({...e,k})).sort((a,b)=>(prioOf(a.w)==="must"?0:1)-(prioOf(b.w)==="must"?0:1)||((a.r.day||99)-(b.r.day||99))||((a.r.time?toMin(a.r.time):9999)-(b.r.time?toMin(b.r.time):9999)));
   for(const e of order){
-    const must=prioOf(e.w)==="must", len=parseDur(e.r.duration)||DEF_DUR[e.w.cat]||60, here=geoGet(e.w.name!=null?wishQuery(e.w):null); curHere=here;
-    const aiDay=e.r.day?e.r.day-1:null, pref=e.r.time?toMin(e.r.time):null;
+    const must=prioOf(e.w)==="must", len=parseDur(e.r.duration)||DEF_DUR[e.w.cat]||60, here=e.w.name!=null?wishGeo(e.w):null; curHere=here;
+    const aiDay=e.r.day?e.r.day-1:null; let pref=e.r.time?toMin(e.r.time):null;
+    if(chain&&aiDay!=null&&lastEnd[aiDay]!=null&&(pref==null||pref<lastEnd[aiDay])) pref=Math.ceil((lastEnd[aiDay]+(here&&lastPt[aiDay]?Math.max(15,travelMin(lastPt[aiDay],here)):rule.gap))/15)*15;
     // 每一天都找一個空檔，再挑最適合的：越接近 AI 建議的時間越好、越空的日子越好、能留在 AI 建議的那天更好
     let got=null;
-    for(const pass of must?[0,1]:[0]){
+    for(const pass of forceDay!=null?[1]:must?[0,1]:[0]){
       let best=null;
       for(let d=0;d<n;d++){
+        if(forceDay!=null&&d!==forceDay) continue;
         if(pass===0&&count[d]>=rule.max) continue;
         const t=tryDay(d,pref,len,e.w.cat); if(t==null) continue;
         // 分數越低越好。最重要的是交通時間：50 分鐘內算同一區，優先排在一起；超過 50 分鐘算遠，盡量另開一天
@@ -1109,7 +1223,7 @@ function makeSlots(entries,{skip}={}){
       if(best){ got=best; break; }
     }
     if(!got){ out[e.key]={day:null,time:"",moved:false,note:must?"每天的空檔都排不下，請自己挑一天":"時間排不下（每天都已排滿或沒有空檔）"}; continue; }
-    busy[got.d].push([got.t,got.t+len,here]); count[got.d]++; if(here) pts[got.d].push(here);
+    busy[got.d].push([got.t,got.t+len,here]); count[got.d]++; if(here) pts[got.d].push(here); lastEnd[got.d]=got.t+len; if(here) lastPt[got.d]=here;
     const moved=aiDay!==got.d||pref!==got.t;
     if(aiDay==null){ out[e.key]={day:got.d+1,time:fromMin(got.t),moved:true,len,note:`AI 原本覺得排不下，這裡找到 Day ${got.d+1} 的空檔，請確認營業時間${e.r.why?`（AI 的原因：${String(e.r.why).slice(0,40)}）`:""}`}; continue; }
     out[e.key]={day:got.d+1,time:fromMin(got.t),moved,len,note:moved?`已避開重疊${aiDay!=null&&aiDay!==got.d?`，從 Day ${aiDay+1} 改到 Day ${got.d+1}`:""}，並預留前後的交通時間`:""};
@@ -1846,7 +1960,7 @@ function loadLeaflet(){
 }
 const stopQuery = x => { const a=String(x.addr||"").trim(); if(a&&!isUrl(a)) return a; return `${String(x.title||"").replace(/^[^\p{L}\p{N}]+/u,"").replace(/^(從住宿出發|回到住宿|退房|入住)：/,"").replace(/[（(].*?[)）]/g,"").trim()} ${S.trip?.destination||""}`.trim(); };
 function mapStops(day){
-  return dayList(day).filter(x=>x.time&&!isFlight(x)&&x.title!==STAY_TBD&&!String(x.title).includes(STAY_TBD)).map(x=>({id:x.id,title:x.title,time:x.time,url:isUrl(x.addr)?x.addr:"",...stopRef(x)}))
+  return dayList(day).filter(x=>x.time&&!isFlight(x)&&x.title!==STAY_TBD&&!String(x.title).includes(STAY_TBD)).map(x=>({id:x.id,title:x.title,time:x.time,url:isUrl(x.addr)?x.addr:"",...stopRef(x),geo:x.geo&&Number.isFinite(+x.geo.lat)?{lat:+x.geo.lat,lng:+x.geo.lng}:null}))
     .filter((s,k,arr)=>k===0||arr[k-1].q!==s.q);   // 連續同一個地點（例如退房後馬上入住同一間）只留一個
 }
 const gmapsDir = stops => { const q=s=>encodeURIComponent(s.q); if(stops.length<2) return stops.length?`https://www.google.com/maps/search/?api=1&query=${q(stops[0])}`:""; const mid=stops.slice(1,-1).slice(0,8).map(q).join("%7C"); return `https://www.google.com/maps/dir/?api=1&origin=${q(stops[0])}&destination=${q(stops[stops.length-1])}${mid?`&waypoints=${mid}`:""}&travelmode=transit`; };
@@ -1909,10 +2023,10 @@ async function drawMap1(stops,sig){
   if(sig!==mapSig||!$("mapCanvas")) return;
   mapObj=L.map("mapCanvas",{zoomControl:true,attributionControl:true,scrollWheelZoom:false}).setView([35.68,139.76],11);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'}).addTo(mapObj);
-  await geoResolve(stops,msg);
+  await geoResolve(stops.filter(s0=>!s0.geo),msg);
   if(sig!==mapSig||!mapObj) return;
   const pts=[]; let miss=0;
-  stops.forEach((s0,k)=>{ const p=geoGet(s0.q), g=$("geo_"+k);
+  stops.forEach((s0,k)=>{ const p=s0.geo||geoGet(s0.q), g=$("geo_"+k);
     if(p){ pts.push([p.lat,p.lng]); L.marker([p.lat,p.lng],{icon:L.divIcon({className:"map-pin",html:`<span>${k+1}</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(mapObj).bindPopup(`${k+1}. ${esc(s0.time)} ${esc(s0.title)}`); }
     else { miss++; if(g) g.textContent="（找不到位置，補上地址會更準）"; } });
   if(pts.length>1) L.polyline(pts,{color:"#2F6B55",weight:3,opacity:.8,dashArray:"6 6"}).addTo(mapObj);
@@ -2430,6 +2544,9 @@ document.addEventListener("click",async e=>{
   { const a=e.target.closest("[data-wpadd]"); if(a){ a.disabled=true; await addWishPlans([Number(a.dataset.wpadd)]); return; } }
   { const m=e.target.closest("[data-wishmanual]"); if(m){ const w=(S.wishes||[]).find(x=>x.id===m.dataset.wishmanual); if(w) itemSheet(null,{title:w.name,cat:w.cat||"other",addr:w.addr||"",note:w.note||"",wishId:w.id}); return; } }
   { const we=e.target.closest("[data-wishedit]"); if(we){ wishEditSheet(we.dataset.wishedit); return; } }
+  { const wg=e.target.closest("[data-wishgeo]"); if(wg){ wishGeoSheet(wg.dataset.wishgeo); return; } }
+  { const ag=e.target.closest("[data-areago]"); if(ag){ ag.disabled=true; ag.textContent="排進中…"; await areaGo(Number(ag.dataset.areago)); return; } }
+  if(e.target.closest("[data-arearefresh]")){ for(const w of wishOpen()){ if(!w.geo?.manual){ const q=wishQuery(w); if(GEO[q]&&GEO[q].miss) delete GEO[q]; } } areaSig=""; renderAreas(true); return; }
   if(e.target.closest("[data-wishback]")){ wishesSheet(); return; }
   { const r=e.target.closest("[data-wishrm]"); if(r){ await guard(()=>del("wishes",r.dataset.wishrm)); return; } }
   { const g=e.target.closest("[data-wishgo]"); if(g){ const it=S.items.find(x=>x.id===g.dataset.wishgo); if(it){ S.day=it.day; closeSheet(); render(); window.scrollTo(0,0); } return; } }
