@@ -14,7 +14,7 @@ const DRIVE_MAX = 30*1024*1024;
 
 /* ---------- constants ---------- */
 const CATS = {
-  tour:{label:"團費",v:"--c-tour"}, move:{label:"交通",v:"--c-move"}, stay:{label:"住宿",v:"--c-stay"},
+  tour:{label:"景點／行程",v:"--c-tour"}, move:{label:"交通",v:"--c-move"}, stay:{label:"住宿",v:"--c-stay"},
   food:{label:"餐飲",v:"--c-food"}, ticket:{label:"門票",v:"--c-ticket"}, shop:{label:"購物",v:"--c-shop"}, other:{label:"其他",v:"--c-other"}
 };
 const QUICK = ["護照","機票／電子票","外幣現金","信用卡","手機充電器","行動電源","轉接頭","常備藥","保暖外套","手套圍巾","暖暖包","盥洗用品","換洗衣物","雨傘","購物袋"];
@@ -23,7 +23,7 @@ const LIKES = ["溫泉","美食","購物","自然風景","親子","文化古蹟"
 const ORIGINS = [["TPE","桃園"],["RMQ","台中"],["KHH","高雄"],["TSA","松山"]];
 const AIRPORTS = ["TPE 桃園","RMQ 台中","KHH 高雄","TSA 松山","NRT 東京成田","HND 東京羽田","KIX 大阪關西","NGO 名古屋","FUK 福岡","CTS 札幌新千歲","OKA 沖繩那霸","SDJ 仙台","KIJ 新潟","HKD 函館","ICN 首爾仁川","PUS 釜山","CJU 濟州","BKK 曼谷","CNX 清邁","SGN 胡志明市","DAD 峴港","SIN 新加坡","HKG 香港","MFM 澳門","HUN 花蓮","TTT 台東","MZG 澎湖","KNH 金門"];
 const WD = ["日","一","二","三","四","五","六"];
-const SUBS = ["items","comments","packing","journal","media","snapshots","fares","dayplans","wishes","entries","shopping","docs","events"];
+const SUBS = ["items","comments","packing","journal","media","snapshots","fares","dayplans","wishes","entries","shopping","docs","events","split"];
 
 /* ---------- firebase ---------- */
 const configured = !String(FIREBASE_CONFIG.apiKey).includes("請填入");
@@ -82,7 +82,7 @@ async function guard(fn){
 let unsubTrip = [];
 function subscribeTrip(id){
   unsubTrip.forEach(u=>u()); unsubTrip=[];
-  S.tripId=id; S.trip=null; S.items=[]; S.comments=[]; S.packing=[]; S.journal={}; S.dayplans={}; S.wishes=[]; S.entries=[]; S.shopping=[]; S.docs=[]; S.events=[]; S.media=[]; S.snaps=[]; S.fares=[]; S.day=0;
+  S.tripId=id; S.trip=null; S.items=[]; S.comments=[]; S.packing=[]; S.journal={}; S.dayplans={}; S.wishes=[]; S.entries=[]; S.shopping=[]; S.docs=[]; S.events=[]; S.split=[]; S.media=[]; S.snaps=[]; S.fares=[]; S.day=0;
   if(!id){ render(); return; }
   store.set("lastTrip",id);
   const err = e => { console.warn(e); setSync(false,"同步中斷，請重新整理"); };
@@ -247,7 +247,7 @@ function renderPlan(){
   $("days").innerHTML=chips;
   const list=S.items.filter(x=>x.day===S.day).sort((a,b)=>(a.time||"99").localeCompare(b.time||"99"));
   $("dayTitle").textContent=`Day ${S.day+1}　${dLabel(dayDate(S.day))}`;
-  $("btnSuggest").hidden=false; $("dayPlan").innerHTML=dayPlanCard()+evChip();
+  $("btnSuggest").hidden=false; $("dayPlan").innerHTML=dayPlanCard()+wxChip()+evChip();
   const dc=list.reduce((s,x)=>s+costOf(x),0);
   $("dayCost").textContent= dc ? `本日 ${money(dc)}` : "";
   let html="";
@@ -264,7 +264,7 @@ function renderPlan(){
     html+=`<div class="item" role="button" tabindex="0" data-item="${esc(it.id)}" ${canDrag?`data-drag="${esc(it.id)}"`:""} style="--cat:var(${c.v})">
       <span class="t">${esc(it.time||"—")}${it.end?`<span class="t-end">${esc(it.end)}</span>`:""}</span>
       <span class="card"><span class="ttl">${esc(it.title)}</span>
-        <span class="meta"><span class="chip">${c.label}</span>${ov.has(it.id)?`<span class="chip warn-chip">⚠️ 時間重疊</span>`:""}${cost?`<span class="num">${money(cost)}${Number(it.actual)>0?" 實付":""}</span>`:""}${open?`<span class="cmt-badge">${open} 則留言</span>`:""}</span>
+        <span class="meta"><span class="chip">${c.label}</span>${ov.has(it.id)?`<span class="chip warn-chip">⚠️ 時間重疊</span>`:""}${(()=>{ const c=chkFor(it.id); return c?`<span class="chip ${c.level==="bad"?"warn-chip":"info-chip"}">${c.level==="bad"?"❌":c.level==="warn"?"🕒":"💡"} ${esc(c.msg.slice(0,18))}${c.msg.length>18?"…":""}</span>`:""; })()}${cost?`<span class="num">${money(cost)}${Number(it.actual)>0?" 實付":""}</span>`:""}${open?`<span class="cmt-badge">${open} 則留言</span>`:""}</span>
         ${it.note?`<span class="note" style="display:block">${esc(it.note)}</span>`:""}
         ${it.addr&&!isUrl(it.addr)?`<span class="note" style="display:block">📍 ${esc(it.addr)}</span>`:""}
         ${S.canWrite!==false?`<button class="item-del" type="button" data-delitem="${esc(it.id)}" aria-label="刪除「${esc(it.title)}」"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg><span class="del-q">刪除？</span></button>`:""}
@@ -343,8 +343,8 @@ const infoCard=(k,v)=>`<div class="item" style="--cat:var(--c-move)"><span class
 function renderBudget(){
   const el=$("tabBudget"), t=S.trip;
   if(!t){ el.innerHTML=`<div class="empty">先建立旅行。</div>`; delete el.dataset.trip; return; }
-  if(el.dataset.trip!==S.tripId){ el.dataset.trip=S.tripId; fxState.from=null; el.innerHTML=`<div class="panel" id="fxBox"></div><div class="panel" id="ledgerBox"></div><details class="panel fold" id="famBudget"><summary><h3 style="margin:0">👪 全家預算 <span class="sub">大家都看得到</span></h3></summary><div class="fold-body" id="budgetBox"></div></details>`; loadFx(); }
-  renderFx(); renderLedger();
+  if(el.dataset.trip!==S.tripId){ el.dataset.trip=S.tripId; fxState.from=null; el.innerHTML=`<div class="panel" id="fxBox"></div><div class="panel" id="ledgerBox"></div><div class="panel" id="splitBox"></div><details class="panel fold" id="famBudget"><summary><h3 style="margin:0">👪 全家預算 <span class="sub">大家都看得到</span></h3></summary><div class="fold-body" id="budgetBox"></div></details>`; loadFx(); }
+  renderFx(); renderLedger(); renderSplit();
   const bx=$("budgetBox");
   const budget=Number(t.budget)||0, est=S.items.reduce((s,x)=>s+(Number(x.est)||0),0), act=S.items.reduce((s,x)=>s+(Number(x.actual)||0),0), plan=S.items.reduce((s,x)=>s+costOf(x),0);
   const pct=budget?plan/budget:0, cls=pct>1?"bad":pct>=.9?"warn":"";
@@ -574,6 +574,7 @@ function itemSheet(id,pre){
     <label>分類<select id="f_cat">${catOpts}</select></label>
     <div class="row2"><label>預估費用<input id="f_est" type="number" inputmode="numeric" min="0" value="${esc(it.est||"")}" placeholder="0"></label><label>實際花費<input id="f_act" type="number" inputmode="numeric" min="0" value="${esc(it.actual||"")}" placeholder="付款後填"></label></div>
     <label>備註<textarea id="f_note" rows="2">${esc(it.note)}</textarea></label>
+    ${id?`<button class="ghost addr-btn" type="button" data-addrcard="${esc(id)}">🪪 給司機看的地址卡</button>`:""}
     <div class="sheet-actions"><button class="primary" type="submit">儲存</button><button class="ghost" type="button" data-close>取消</button>${id?`<button class="danger" type="button" id="delBtn">刪除</button>`:""}</div>
   </form>
   ${id&&S.canWrite!==false?`<details class="fold copy-box" id="copyBox"><summary><h3 style="margin:0;font-size:16px">📋 複製到其他時間</h3></summary>
@@ -984,8 +985,9 @@ function wishCard(w){
     <div class="idea-top">${ro?`<b style="font-size:16px">${esc(w.name)}</b>`:`<button class="wish-name" type="button" data-wishedit="${esc(w.id)}" aria-label="編輯「${esc(w.name)}」">${esc(w.name)}</button>`}<span class="badges">${prioBadge(w)}<span class="chip">${(WCATS.find(x=>x[0]===w.cat)||WCATS[4])[1]}</span></span></div>
     ${w.addr&&!isUrl(w.addr)?`<div class="note">📍 ${esc(w.addr)}</div>`:""}
     ${w.note?`<div class="sub">${esc(w.note)}</div>`:""}
-    <div class="facts">${it?`<span><b>已排 Day ${it.day+1}${it.time?" "+esc(it.time):""}</b></span>`:""}<span>${esc(nameOf(w.by))} 加的</span></div>
+    <div class="facts">${it?`<span><b>已排 Day ${it.day+1}${it.time?" "+esc(it.time):""}</b></span>`:""}<span>${esc(nameOf(w.by))} 加的</span>${votesOf(w).length?`<span>👍 ${esc(voterNames(w).join("、"))}</span>`:""}</div>
     <div class="row-actions">
+      ${ro?"":`<button class="vote-btn" type="button" data-vote="${esc(w.id)}" aria-pressed="${!!(w.votes||{})[myVoteId()]}">👍 ${votesOf(w).length||""}</button>`}
       ${it?`<button class="ghost" type="button" data-wishgo="${esc(it.id)}">看這天的行程</button>`:(ro?"":`<button class="ghost" type="button" data-wishmanual="${esc(w.id)}">自己排</button>`)}
       <a class="link" href="${esc(map)}" target="_blank" rel="noopener noreferrer">地圖 ↗</a>
       ${ro||it?"":`<button class="link" type="button" data-wishgeo="${esc(w.id)}">${wishGeo(w)?"📍 位置":"⚠️ 設定位置"}</button>`}
@@ -996,7 +998,7 @@ function wishCard(w){
 }
 function renderWishes(){
   if(openSheetKind!=="wishes") return;
-  const open=wishOpen().sort((a,b)=>(prioOf(a)==="must"?0:1)-(prioOf(b)==="must"?0:1)||a.at-b.at), done=(S.wishes||[]).filter(w=>wishItem(w)).sort((a,b)=>(wishItem(a).day-wishItem(b).day)||String(wishItem(a).time).localeCompare(String(wishItem(b).time)));
+  const open=wishOpen().sort((a,b)=>(prioOf(a)==="must"?0:1)-(prioOf(b)==="must"?0:1)||votesOf(b).length-votesOf(a).length||a.at-b.at), done=(S.wishes||[]).filter(w=>wishItem(w)).sort((a,b)=>(wishItem(a).day-wishItem(b).day)||String(wishItem(a).time).localeCompare(String(wishItem(b).time)));
   const n1=$("wishOpenN"), n2=$("wishDoneN"); if(n1) n1.textContent=open.length||""; if(n2) n2.textContent=done.length||"";
   const go=$("wpGo"); if(go){ go.disabled=wp.busy||!open.length; go.textContent=wp.res&&!wp.auto?"重新建議":"先看建議"; }
   const au=$("wpAuto"); if(au){ au.disabled=wp.busy||!open.length; au.innerHTML=wp.busy?`<span class="spinner"></span>安排中…`:"⚡ 一鍵排進行程"; }
@@ -1121,7 +1123,7 @@ async function renderAreas(force){
     ${groups.length||unknown.length?`<p class="sub" style="margin:6px 0 0">同一個顏色是同一區（彼此交通大約 25 分鐘內）。選好要排哪一天，按「排進這天」，App 會依路線順序找不衝突的時間。</p>`:`<p class="sub" style="margin:6px 0 0">想去的地點都排進行程了，地圖上是每一天排好的地點。</p>`}
     ${(()=>{ const taken=new Set(); return groups.map((g,k)=>{ const sd=suggestDay(g,taken); taken.add(sd); const mins=g.reduce((s,w)=>s+(DEF_DUR[w.cat]||60),0);
       return `<div class="area-card" style="--ac:${AREA_COLORS[k%AREA_COLORS.length]}"><div class="area-h"><span class="area-dot"></span><b>第 ${k+1} 區</b><span class="sub">${g.length} 個地點・停留約 ${Math.round(mins/30)/2} 小時</span></div>
-        <div class="area-ws">${routeOrder(g,null).map(w=>`<span class="area-w">${prioOf(w)==="must"?"⭐ ":""}${esc(w.name)}</span>`).join("")}</div>
+        <div class="area-ws">${routeOrder(g,null).map(w=>`<span class="area-w">${prioOf(w)==="must"?"⭐ ":""}${esc(w.name)}${votesOf(w).length?` 👍${votesOf(w).length}`:""}</span>`).join("")}</div>
         ${ro?"":`<div class="area-go"><select id="ad_${k}" aria-label="第 ${k+1} 區排在哪一天">${dayOpt(sd)}</select><button class="primary sm" type="button" data-areago="${k}">排進這天</button></div><p class="sub" style="margin:2px 0 0">建議：Day ${sd+1}${dayLoad(sd).length?"（附近已經有行程）":"（還沒有行程）"}</p>`}
       </div>`; }).join(""); })()}
     ${unknown.length?`<div class="area-card area-unknown"><div class="area-h"><b>📍 找不到位置</b><span class="sub">${unknown.length} 個</span></div><p class="sub" style="margin:0 0 6px">在地圖上點一下設定位置，才能分區。</p><div class="area-ws">${unknown.map(w=>`<button class="area-w link" type="button" data-wishgeo="${esc(w.id)}">${esc(w.name)}・設定位置</button>`).join("")}</div></div>`:""}`;
@@ -1763,12 +1765,14 @@ async function applyFare(f){
 }
 
 function refreshOpenSheet(kind){
+  if(kind==="events"&&(openSheetKind==="hours"||openSheetKind==="pass")&&!$("sheet").hidden){ if($("hrBody")&&!$("hrBody").querySelector(".spinner")) renderHours(); if($("psBody")&&!$("psBody").querySelector(".spinner")) renderPass(); return; }
   if(kind!==openSheetKind||$("sheet").hidden) return;
   if(kind==="suggest"){ renderSug(); return; }
   if(kind==="route"){ renderRoute(); return; }
   if(kind==="wishes"){ renderWishes(); return; }
   if(kind==="shopping"){ renderShopping(); return; }
   if(kind==="docs"){ renderDocs(); return; }
+  if(kind==="hours"||kind==="events"){ if($("hrBody")) renderHours(); if($("psBody")) renderPass(); if(kind==="events") renderEvents(); return; }
   if(kind==="events"){ renderEvents(); return; }
   if(kind==="trips"){ const el=$("tripList"); if(!el) return; el.innerHTML=S.trips.length?S.trips.map(t=>`<button class="trip-row" type="button" data-pick="${esc(t.id)}" aria-current="${t.id===S.tripId}"><span><b>${esc(t.title||"未命名")}</b><span class="sub">${esc(t.destination||"")}${t.startDate?"・"+esc(t.startDate):""}</span></span><span aria-hidden="true">›</span></button>`).join(""):`<p class="sub">還沒有旅行。</p>`; }
   if(kind==="ideas"){ const el=$("ideaList"); if(!el) return; const list=[...S.ideas].sort((a,b)=>((b.likes||[]).length-(a.likes||[]).length)||(b.at-a.at)); el.innerHTML=list.length?list.map(ideaCard).join(""):`<p class="sub" style="margin:0">還沒有候選地。輸入想去的地方並按「加入候選」，家人就能一起投票。</p>`; }
@@ -2135,6 +2139,197 @@ async function runEvents(){
 async function evToWish(tag){
   const [di,k]=tag.split(":").map(Number); const x=evDay(di)||((evDoc()?.data?.days)||[]).find(y=>Number(y.day)===di+1); const e=x?.events?.[k]; if(!e) return;
   if(await guard(()=>put("wishes",null,{name:e.name,cat:"tour",prio:"want",addr:e.where||"",note:[`Day ${di+1} ${e.time||""}`.trim(),e.nameLocal&&e.nameLocal!==e.name?e.nameLocal:"",e.tip||""].filter(Boolean).join("・"),...stampBy()}))) toast("已加入想去清單");
+}
+
+/* ---------- 🪪 給司機看的地址卡 ---------- */
+async function addrCard(id){
+  const it=S.items.find(x=>x.id===id); if(!it) return;
+  const name=geoName(it.title);
+  const show=()=>{ const L=it.local||{};
+    openSheet(`<div class="acard">
+      <div class="acard-k">請帶我到這裡　Please take me here</div>
+      <div class="acard-name" id="acName">${esc(L.name||name)}</div>
+      <div class="acard-addr" id="acAddr">${esc(L.addr||(isUrl(it.addr)?"":it.addr||""))||'<span class="sub">（還沒有當地地址）</span>'}</div>
+      ${L.phone?`<div class="acard-tel">☎ ${esc(L.phone)}</div>`:""}
+      <div class="sub">${esc(name)}</div></div>
+      <p class="msg" id="acMsg"></p>
+      <div class="sheet-actions"><button class="primary" type="button" id="acCopy">複製地址</button><a class="ghost" style="text-align:center;text-decoration:none" href="${esc(mapsSearch({title:L.name||name,addr:L.addr||it.addr||""}))}" target="_blank" rel="noopener noreferrer">在地圖開啟 ↗</a></div>
+      <details class="fold"><summary><span class="sub">修改當地名稱和地址</span></summary><form class="form" id="acF" style="margin-top:8px">
+        <label>當地語言的名稱<input id="ac_n" value="${esc(L.name||"")}" placeholder="例如：新宿プリンスホテル"></label>
+        <label>當地語言的地址<input id="ac_a" value="${esc(L.addr||"")}" placeholder="例如：東京都新宿区歌舞伎町1-30-1"></label>
+        <label>電話（選填）<input id="ac_p" value="${esc(L.phone||"")}" inputmode="tel"></label>
+        <div class="sheet-actions"><button class="primary sm" type="submit">儲存</button>${S.canWrite===false?"":`<button class="ghost" type="button" id="acAi">請 AI 重新查</button>`}</div></form></details>
+      <p class="est">把手機轉向司機或路人。名稱和地址是 AI 查的，第一次用請和訂房確認信或官網核對。</p>`,"addrcard");
+    $("acCopy").onclick=()=>copyText([L.name||name,L.addr||it.addr||""].filter(Boolean).join("\n"),"已複製");
+    $("acF").onsubmit=async e=>{ e.preventDefault(); const {id:_i,...r}=it; const local={name:$("ac_n").value.trim(),addr:$("ac_a").value.trim(),phone:$("ac_p").value.trim(),manual:true};
+      if(await guard(()=>put("items",id,{...r,local}))){ it.local=local; toast("已儲存"); show(); } };
+    const ab=$("acAi"); if(ab) ab.onclick=()=>fetchLocal(true);
+  };
+  const fetchLocal=async(force)=>{ const m=$("acMsg"); if(m) m.textContent="正在查當地語言的名稱和地址…";
+    try{ const r=await ai("card",{destination:S.trip?.destination||S.trip?.title||"",places:[{i:0,name,addr:isUrl(it.addr)?"":(it.addr||"")}]}); const g=(r?.places||[])[0];
+      if(!g||(!g.nameLocal&&!g.addrLocal)) throw {code:"bad_output"};
+      const local={name:String(g.nameLocal||"").slice(0,80),addr:String(g.addrLocal||"").slice(0,160),phone:String(g.phone||"").slice(0,30),sure:g.sure!==false};
+      if(S.canWrite!==false){ const {id:_i,...rr}=it; await guard(()=>put("items",id,{...rr,local})); } it.local=local; show(); if(local.sure===false) $("acMsg").textContent="AI 不太確定這個地址，請和訂房確認信或官網核對。"; }
+    catch(e){ const mm=$("acMsg"); if(mm) mm.textContent=`${aiError(e)}　可以按下面「修改當地名稱和地址」自己填。`; }
+  };
+  show(); if(!it.local||(!it.local.name&&!it.local.addr)) fetchLocal(false);
+}
+
+/* ---------- 👍 想去清單投票 ---------- */
+const myVoteId = () => S.user?.uid||"me";
+const votesOf = w => Object.keys(w.votes||{}).filter(k=>w.votes[k]);
+const voterNames = w => [...new Set(votesOf(w).map(k=>nameOf(k)))];
+async function toggleVote(id){
+  const w=(S.wishes||[]).find(x=>x.id===id); if(!w) return; const me=myVoteId(); const v={...(w.votes||{})};
+  if(v[me]) delete v[me]; else v[me]=Date.now();
+  const {id:_i,...r}=w; await guard(()=>put("wishes",id,{...r,votes:v}));
+}
+
+/* ---------- 👪 家人分帳 ---------- */
+const splitPeople = () => { const t=S.trip||{}; if(Array.isArray(t.splitPeople)&&t.splitPeople.length) return t.splitPeople; const n=[...new Set(Object.values(S.users||{}).map(u=>u.nick||u.name).filter(Boolean))]; return n.length?n:[MY_NAME()||"我"]; };
+function MY_NAME(){ return S.users?.[S.user?.uid]?.nick||S.user?.displayName||""; }
+function splitCalc(){
+  const people=splitPeople(), home=homeCur(), bal=Object.fromEntries(people.map(p=>[p,0]));
+  let total=0, unknown=0;
+  for(const x of S.split||[]){ const amt=inHome(x); if(amt==null){ unknown++; continue; } total+=amt; const among=(x.among&&x.among.length?x.among:people).filter(p=>p in bal||people.includes(p)); if(!among.length) continue;
+    if(!(x.payer in bal)) bal[x.payer]=0; bal[x.payer]+=amt; const each=amt/among.length; among.forEach(p=>{ if(!(p in bal)) bal[p]=0; bal[p]-=each; }); }
+  // 最少轉帳次數：欠最多的付給收最多的
+  const pos=Object.entries(bal).filter(([,v])=>v>0.5).map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v), neg=Object.entries(bal).filter(([,v])=>v<-0.5).map(([k,v])=>({k,v:-v})).sort((a,b)=>b.v-a.v);
+  const moves=[]; let i=0,j=0; while(i<pos.length&&j<neg.length){ const m=Math.min(pos[i].v,neg[j].v); moves.push({from:neg[j].k,to:pos[i].k,amt:m}); pos[i].v-=m; neg[j].v-=m; if(pos[i].v<0.5) i++; if(neg[j].v<0.5) j++; }
+  return {people,bal,total,unknown,moves,home};
+}
+let splitOff=new Set(), splitPayer=null;   // splitOff：這次「不一起分」的人
+function renderSplit(){
+  const box=$("splitBox"); if(!box||!S.trip) return; const ro=S.canWrite===false;
+  const {people,bal,total,unknown,moves,home}=splitCalc();
+  if(splitPayer==null||!people.includes(splitPayer)) splitPayer=people.includes(MY_NAME())?MY_NAME():people[0];
+  if(!box.dataset.built){ box.dataset.built="1";
+    box.innerHTML=`<div class="led-head"><h3>👪 家人分帳</h3><span class="sub">全家都看得到</span></div>
+      <div id="splitSum"></div>
+      ${ro?"":`<form class="form" id="splitF" autocomplete="off">
+        <div class="fx-row"><input id="sp_amt" inputmode="decimal" placeholder="金額" required aria-label="金額"><select id="sp_cur" aria-label="幣別"></select></div>
+        <input id="sp_note" placeholder="付了什麼，例如：晚餐、計程車、門票" maxlength="60">
+        <div><div class="sub" style="margin-bottom:4px">誰先付的</div><div class="tags" id="sp_payer"></div></div>
+        <div><div class="sub" style="margin-bottom:4px">哪些人一起分（預設全部）</div><div class="tags" id="sp_among"></div></div>
+        <div class="sheet-actions"><button class="primary" type="submit">記一筆分帳</button></div>
+      </form>`}
+      <div id="splitList"></div>
+      ${ro?"":`<details class="fold" style="margin-top:8px"><summary><span class="sub">分帳的成員（${people.length} 人）</span></summary><div class="form" style="margin-top:8px"><p class="sub" style="margin:0">預設是用 App 的家人名稱。沒有用 App 的家人（例如爺爺）也可以加進來，用逗號分開。</p><input id="sp_people" value="${esc(people.join("、"))}"><button class="ghost sm" type="button" id="sp_savePeople">儲存成員</button></div></details>`}`;
+    const f=$("splitF"); if(f) f.onsubmit=async e=>{ e.preventDefault(); const amount=Number($("sp_amt").value.replace(/[,\s]/g,"")); if(!(amount>0)){ $("sp_amt").focus(); return; }
+      const cur=$("sp_cur").value, among=splitPeople().filter(p=>!splitOff.has(p)); if(!among.length){ toast("請選擇一起分的人"); return; }
+      if(await guard(()=>put("split",null,{amount,cur,home:homeCur(),rate:fxRate(cur,homeCur())??null,note:$("sp_note").value.trim(),payer:splitPayer,among:among.length===splitPeople().length?[]:among,date:todayIso(),...stampBy()}))){ $("sp_amt").value=""; $("sp_note").value=""; splitOff=new Set(); renderSplit(); toast(`已記下：${splitPayer} 付了 ${fmtCur(amount,cur)}`); } };
+    const sv=$("sp_savePeople"); if(sv) sv.onclick=async()=>{ const list=[...new Set($("sp_people").value.split(/[、,，\s]+/).map(x=>x.trim()).filter(Boolean))].slice(0,20); if(!list.length) return;
+      if(await guard(()=>put("trip",null,{...S.trip,splitPeople:list}))){ splitOff=new Set(); toast("已更新分帳成員"); box.dataset.built=""; renderSplit(); } };
+  }
+  const c=$("sp_cur"); if(c){ const want=c.value||tripCur(); c.innerHTML=curOpts(want); }
+  const P=$("sp_payer"); if(P) P.innerHTML=people.map(p=>`<button type="button" data-sppayer="${esc(p)}" aria-pressed="${p===splitPayer}">${esc(p)}</button>`).join("");
+  const A=$("sp_among"); if(A) A.innerHTML=people.map(p=>`<button type="button" data-spamong="${esc(p)}" aria-pressed="${!splitOff.has(p)}">${esc(p)}</button>`).join("");
+  $("splitSum").innerHTML=(S.split||[]).length?`<div class="per"><div><span class="sub">共同花費</span><span class="num">${fmtCur(total,home,0)}</span></div><div><span class="sub">每人平均</span><span class="num">${fmtCur(total/Math.max(1,people.length),home,0)}</span></div></div>
+    <div class="split-bal">${Object.entries(bal).map(([k,v])=>`<span class="${v>0.5?"plus":v<-0.5?"minus":""}">${esc(k)} ${v>0.5?"多付":v<-0.5?"少付":"剛好"} ${Math.abs(v)>0.5?fmtCur(Math.abs(v),home,0):""}</span>`).join("")}</div>
+    ${moves.length?`<div class="split-moves"><b>怎麼結清</b>${moves.map(m=>`<div>${esc(m.from)} → ${esc(m.to)}　<b class="num">${fmtCur(m.amt,home,0)}</b></div>`).join("")}</div>`:`<p class="sub">目前都結清了。</p>`}${unknown?`<p class="sub">${unknown} 筆還沒有匯率，連網後會自動換算。</p>`:""}`:`<p class="sub" style="margin:0 0 8px">一起出錢的花費記在這裡（例如有人先刷卡付了晚餐），App 會算出最後誰要給誰多少錢。</p>`;
+  const list=[...(S.split||[])].sort((a,b)=>b.at-a.at);
+  $("splitList").innerHTML=list.length?`<div class="led-day">${list.map(x=>`<div class="led-item split-item"><span class="led-txt"><b>${esc(x.note||"共同花費")}</b><span class="sub">${esc(x.payer)} 先付・${x.among?.length?x.among.map(esc).join("、")+" 分":"全部人分"}・${esc((x.date||"").slice(5).replace("-","/"))}</span></span><span class="led-amt"><b class="num">${fmtCur(x.amount,x.cur)}</b>${x.cur!==home&&inHome(x)!=null?`<span class="sub num">≈ ${fmtCur(inHome(x),home,0)}</span>`:""}</span>${ro?"":`<button class="item-del" style="position:static" type="button" data-spdel="${esc(x.id)}" aria-label="刪除這筆"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg><span class="del-q">刪除？</span></button>`}</div>`).join("")}</div>`:"";
+}
+
+/* ---------- ☔ 天氣（Open-Meteo，免費、不用金鑰）和雨天備案 ---------- */
+let WX=null, wxLoading=false;
+const WX_ICON=c=>c==null?"":c<=1?"☀️":c<=3?"⛅":c<=48?"🌫":c<=67?"🌧":c<=77?"🌨":c<=82?"🌧":"⛈";
+function tripCenter(){ const pts=S.items.map(itemGeo).filter(Boolean); if(pts.length) return pts[0]; for(let d=0;d<(S.trip?.days||1);d++){ const h=dp(d).hotelAddr&&!isUrl(dp(d).hotelAddr)?geoGet(dp(d).hotelAddr):null; if(h) return h; } const w=(S.wishes||[]).map(wishGeo).find(Boolean); return w||null; }
+async function loadWeather(){
+  const t=S.trip; if(!t?.startDate||wxLoading) return; const key=S.tripId+t.startDate+(t.days||1);
+  if(WX&&WX.key===key&&Date.now()-WX.at<3*3600e3) return;
+  const start=dayDate(0), end=dayDate((t.days||1)-1), now=new Date(); now.setHours(0,0,0,0);
+  if((start-now)/864e5>15||end<now){ WX={key,at:Date.now(),days:{},far:(start-now)/864e5>15}; return; }
+  const c=tripCenter(); if(!c){ WX={key,at:0,days:{},noloc:true}; return; }   // 還沒有位置：不快取，之後有位置會再試
+  wxLoading=true;
+  try{ const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lng}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=16`); const j=await r.json();
+    const days={}; (j.daily?.time||[]).forEach((d,k)=>{ days[d]={code:j.daily.weather_code[k],hi:j.daily.temperature_2m_max[k],lo:j.daily.temperature_2m_min[k],rain:j.daily.precipitation_probability_max[k]}; });
+    WX={key,at:Date.now(),days}; }
+  catch(e){ console.warn("wx",e); WX={key,at:Date.now()-3*3600e3+600e3,days:{},err:true}; }   // 失敗的話 10 分鐘後再試
+  wxLoading=false; renderPlan();
+}
+function wxChip(){
+  const t=S.trip; if(!t?.startDate) return ""; loadWeather();
+  const d=iso(dayDate(S.day)), w=WX?.days?.[d], ro=S.canWrite===false;
+  const rainBtn=ro?"":`<button class="link" type="button" data-rain="${S.day}">☔ 雨天備案</button>`;
+  if(w) return `<div class="wx-chip ${w.rain>=50?"wet":""}"><span class="wx-i">${WX_ICON(w.code)}</span><span><b class="num">${Math.round(w.hi)}° / ${Math.round(w.lo)}°</b>　降雨機率 ${w.rain??"—"}%</span>${w.rain>=50?`<button class="primary sm" type="button" data-rain="${S.day}">☔ 看雨天備案</button>`:rainBtn}</div>`;
+  if(WX?.far) return `<div class="wx-chip"><span class="wx-i">🌤</span><span class="sub">出發前 16 天內才看得到天氣預報</span>${rainBtn}</div>`;
+  return rainBtn?`<div class="wx-chip"><span class="wx-i">🌤</span><span class="sub">${WX?.noloc?"行程有地點位置後就能看天氣":wxLoading?"讀取天氣中…":"暫時沒有天氣資料"}</span>${rainBtn}</div>`:"";
+}
+let rainRes={};
+async function rainSheet(day){
+  const t=S.trip; if(!t) return; const d=dayDate(day), w=WX?.days?.[d?iso(d):""];
+  openSheet(`<h2>☔ Day ${day+1} 雨天備案</h2><p class="sub" style="margin-top:-6px">${w?`預報：${WX_ICON(w.code)} ${Math.round(w.hi)}°/${Math.round(w.lo)}°・降雨機率 ${w.rain}%`:"還沒有天氣預報，也可以先準備備案。"}</p><div id="rainBody"><div class="empty"><span class="spinner"></span>AI 正在找附近的室內備案…</div></div>`,"rain");
+  const show=r=>{ const b=$("rainBody"); if(!b) return; const ro=S.canWrite===false;
+    b.innerHTML=`${r.summary?`<p>${esc(r.summary)}</p>`:""}${(r.outdoor||[]).length?`<div class="alert warn">下雨時建議換掉：${r.outdoor.map(esc).join("、")}</div>`:""}
+      ${(r.ideas||[]).map((x,k)=>`<div class="idea"><div class="idea-top"><b style="font-size:16px">${esc(x.name)}</b><span class="chip">${esc((WCATS.find(c=>c[0]===x.cat)||WCATS[1])[1])}</span></div>${x.nameLocal&&x.nameLocal!==x.name?`<div class="sub">${esc(x.nameLocal)}</div>`:""}<div class="sub">${[x.area,x.duration,x.near?`靠近 ${x.near}`:""].filter(Boolean).map(esc).join("・")}</div>${x.why?`<p style="margin:4px 0">${esc(x.why)}</p>`:""}${ro?"":`<div class="row-actions"><button class="ghost sm" type="button" data-rainwish="${day}:${k}">♡ 加入想去清單</button></div>`}</div>`).join("")}
+      <div class="sheet-actions"><button class="ghost" type="button" data-rainagain="${day}">重新推薦</button></div>`; };
+  if(rainRes[day]) return show(rainRes[day]);
+  try{ const r=await ai("rain",{destination:t.destination||t.title,date:d?iso(d):"",weekday:d?"週"+WD[d.getDay()]:"",weather:w?`降雨機率 ${w.rain}%`:"可能下雨",travelers:t.travelers||1,who:t.who||"",likes:t.likes||[],items:dayList(day).filter(x=>!x.autoStay).map(x=>`${x.time||""} ${x.title}`),hotel:dp(day).hotel||""});
+    rainRes[day]=r; show(r); }
+  catch(e){ const b=$("rainBody"); if(b) b.innerHTML=`<p class="msg">${esc(aiError(e))}</p>`; }
+}
+
+/* ---------- 🕒 營業時間和公休檢查（AI 上網查證） ---------- */
+const chkDoc = () => (S.events||[]).find(x=>x.id==="hours");
+function chkFor(id){ const d=chkDoc(); return (d?.issues||[]).find(x=>x.id===id&&x.key===itemKey(S.items.find(y=>y.id===id)))||null; }
+const itemKey = x => x?`${x.day}|${x.time}|${x.title}`:"";
+async function hoursSheet(){
+  const t=S.trip; if(!t) return; const ro=S.canWrite===false;
+  openSheet(`<h2>🕒 營業時間和公休檢查</h2><p class="sub" style="margin-top:-6px">AI 會上網查行程裡每個地點那天有沒有公休、時間對不對、要不要預約。有問題的行程會標上 ⚠️。</p><div id="hrBody"></div>`,"hours");
+  renderHours(); if(!ro&&!chkDoc()) runHours();
+}
+function renderHours(busy){
+  const el=$("hrBody"); if(!el) return; const d=chkDoc(), ro=S.canWrite===false;
+  if(busy){ el.innerHTML=`<div class="empty"><span class="spinner"></span>查證中，大約 20～60 秒…</div>`; return; }
+  if(!d){ el.innerHTML=ro?`<p class="sub">還沒有檢查過。</p>`:`<div class="sheet-actions"><button class="primary" type="button" data-hrrun>開始檢查</button></div>`; return; }
+  const live=(d.issues||[]).filter(x=>{ const it=S.items.find(y=>y.id===x.id); return it&&itemKey(it)===x.key; });
+  const lv={bad:["❌ 不能去","ev-no"],warn:["⚠️ 要注意","ev-ok"],info:["💡 提醒","ev-go"]};
+  el.innerHTML=`<div class="drive-status">${d.verified?`<span class="dot"></span><span>已上網查證・${stamp(d.at)}</span>`:`<span class="dot off"></span><span>這次沒有上網查證，請自行確認・${stamp(d.at)}</span>`}</div>
+    ${d.summary?`<p>${esc(d.summary)}</p>`:""}
+    ${live.length?live.map(x=>{ const it=S.items.find(y=>y.id===x.id); const l=lv[x.level]||lv.warn; return `<div class="ev-card"><div class="ev-top"><b>Day ${it.day+1} ${esc(it.time||"")} ${esc(it.title)}</b><span class="ev-badge ${l[1]}">${l[0]}</span></div><p style="margin:2px 0">${esc(x.msg)}</p>${x.hours?`<div class="sub">營業時間：${esc(x.hours)}</div>`:""}${x.fix?`<div class="sub">💡 ${esc(x.fix)}</div>`:""}<div class="row-actions"><button class="link" type="button" data-item="${esc(it.id)}">打開這個行程</button></div></div>`; }).join(""):`<p>沒有發現問題 👍</p>`}
+    ${(d.sources||[]).length?`<details class="fold"><summary><span class="sub">查證來源（${d.sources.length}）</span></summary><ul class="ev-src">${d.sources.map(s0=>`<li><a href="${esc(s0.url)}" target="_blank" rel="noopener noreferrer">${esc(s0.title||s0.url)}</a></li>`).join("")}</ul></details>`:""}
+    <p class="est">行程改過之後請重新檢查。AI 查到的資訊可能有誤，出發前請以官網為準。</p>
+    ${ro?"":`<div class="sheet-actions"><button class="ghost" type="button" data-hrrun>重新檢查</button></div>`}`;
+}
+async function runHours(){
+  const t=S.trip; if(!t) return; const list=S.items.filter(x=>x.time&&!x.autoStay&&!isFlight(x)&&!x.flightItem&&x.cat!=="move"&&x.cat!=="stay").sort((a,b)=>a.day-b.day||a.time.localeCompare(b.time)).slice(0,30);
+  if(!list.length){ toast("行程裡還沒有要檢查的地點"); return; }
+  renderHours(true);
+  try{ const r=await ai("hours",{destination:t.destination||t.title,items:list.map((x,i)=>{ const d=dayDate(x.day); return {i,date:d?iso(d):"",weekday:d?WD[d.getDay()]:"",time:x.time,end:x.end||"",name:geoName(x.title),addr:isUrl(x.addr)?"":(x.addr||"")}; })});
+    const issues=(r?.issues||[]).map(x=>{ const it=list[Number(x.i)]; return it?{id:it.id,key:itemKey(it),level:["bad","warn","info"].includes(x.level)?x.level:"warn",msg:String(x.msg||"").slice(0,160),hours:String(x.hours||"").slice(0,60),fix:String(x.fix||"").slice(0,120)}:null; }).filter(Boolean);
+    await guard(()=>put("events","hours",{issues,summary:String(r?.summary||"").slice(0,160),verified:!!r?.verified,sources:(r?.sources||[]).slice(0,10),at:Date.now(),by:S.user?.uid||null}));
+    renderHours(); renderPlan(); toast(issues.length?`找到 ${issues.length} 個要注意的行程`:"沒有發現問題"); }
+  catch(e){ const el=$("hrBody"); if(el) el.innerHTML=`<p class="msg">${esc(aiError(e))}</p><div class="sheet-actions"><button class="ghost" type="button" data-hrrun>再試一次</button></div>`; }
+}
+
+/* ---------- 🎫 交通票券建議（AI 上網查證） ---------- */
+const passDoc = () => (S.events||[]).find(x=>x.id==="pass");
+async function passSheet(){
+  openSheet(`<h2>🎫 交通票券建議</h2><p class="sub" style="margin-top:-6px">依整趟行程會搭的路線，比較交通卡、周遊券、一日券和單買車票哪個划算。</p><div id="psBody"></div>`,"pass");
+  renderPass(); if(S.canWrite!==false&&!passDoc()) runPass();
+}
+function renderPass(busy){
+  const el=$("psBody"); if(!el) return; const d=passDoc(), ro=S.canWrite===false;
+  if(busy){ el.innerHTML=`<div class="empty"><span class="spinner"></span>查證票價中，大約 20～60 秒…</div>`; return; }
+  if(!d){ el.innerHTML=ro?`<p class="sub">還沒有查過。</p>`:`<div class="sheet-actions"><button class="primary" type="button" data-psrun>開始分析</button></div>`; return; }
+  const W={yes:["✅ 划算","ev-go"],maybe:["🤔 看情況","ev-ok"],no:["✖ 不划算","ev-no"]};
+  el.innerHTML=`<div class="drive-status">${d.verified?`<span class="dot"></span><span>已上網查證・${stamp(d.at)}</span>`:`<span class="dot off"></span><span>這次沒有上網查證，票價請自行確認・${stamp(d.at)}</span>`}</div>
+    ${d.summary?`<p style="font-weight:700">${esc(d.summary)}</p>`:""}
+    ${(d.recommend||[]).map(x=>{ const w=W[x.worth]||W.maybe; return `<div class="ev-card"><div class="ev-top"><b>${esc(x.name)}</b><span class="ev-badge ${w[1]}">${w[0]}</span></div>${x.price?`<div class="num">${esc(x.price)}</div>`:""}${x.covers?`<div class="sub">${esc(x.covers)}</div>`:""}${x.why?`<p style="margin:4px 0">${esc(x.why)}</p>`:""}${x.days?`<div class="sub">建議使用：${esc(x.days)}</div>`:""}${x.buy?`<div class="sub">購買：${esc(x.buy)}</div>`:""}</div>`; }).join("")}
+    ${(d.tips||[]).length?`<ul class="ev-tips">${d.tips.map(s0=>`<li>${esc(s0)}</li>`).join("")}</ul>`:""}
+    ${(d.sources||[]).length?`<details class="fold"><summary><span class="sub">查證來源（${d.sources.length}）</span></summary><ul class="ev-src">${d.sources.map(s0=>`<li><a href="${esc(s0.url)}" target="_blank" rel="noopener noreferrer">${esc(s0.title||s0.url)}</a></li>`).join("")}</ul></details>`:""}
+    <p class="est">票價和規定可能變動，購買前請以官網為準。行程改很多的話請重新分析。</p>
+    ${ro?"":`<div class="sheet-actions"><button class="ghost" type="button" data-psrun>重新分析</button></div>`}`;
+}
+async function runPass(){
+  const t=S.trip; if(!t) return; const n=t.days||1; renderPass(true);
+  try{ const days=Array.from({length:n},(_,i)=>{ const d=dayDate(i); return {day:i+1,date:d?iso(d):"",items:dayList(i).filter(x=>x.time&&!x.autoStay).map(x=>geoName(x.title)).slice(0,12)}; });
+    const hotels=[...new Set(Array.from({length:n},(_,i)=>dp(i).hotel).filter(h=>h&&h!==STAY_TBD))].join("、");
+    const r=await ai("pass",{destination:t.destination||t.title,travelers:t.travelers||1,who:t.who||"",airport:t.airportTo||"",hotels,days});
+    await guard(()=>put("events","pass",{summary:String(r?.summary||"").slice(0,200),recommend:(r?.recommend||[]).slice(0,6),tips:(r?.tips||[]).slice(0,6),verified:!!r?.verified,sources:(r?.sources||[]).slice(0,10),at:Date.now(),by:S.user?.uid||null}));
+    renderPass(); }
+  catch(e){ const el=$("psBody"); if(el) el.innerHTML=`<p class="msg">${esc(aiError(e))}</p><div class="sheet-actions"><button class="ghost" type="button" data-psrun>再試一次</button></div>`; }
 }
 
 /* ---------- 匯率換算 ---------- */
@@ -2523,6 +2718,18 @@ document.addEventListener("click",async e=>{
   if(T("[data-events]")){ evTab=S.day; eventsSheet(); return; }
   if(T("[data-evrun]")){ runEvents(); return; }
   if(T("[data-stay]")){ staySheet(); return; }
+  if((el=T("[data-addrcard]"))){ addrCard(el.dataset.addrcard); return; }
+  if((el=T("[data-vote]"))){ toggleVote(el.dataset.vote); return; }
+  if((el=T("[data-sppayer]"))){ splitPayer=el.dataset.sppayer; renderSplit(); return; }
+  if((el=T("[data-spamong]"))){ const p=el.dataset.spamong; if(splitOff.has(p)) splitOff.delete(p); else splitOff.add(p); renderSplit(); return; }
+  if((el=T("[data-spdel]"))){ if(!el.classList.contains("armed")){ el.classList.add("armed"); setTimeout(()=>el.classList.remove("armed"),3000); return; } if(await guard(()=>del("split",el.dataset.spdel))) toast("已刪除這筆分帳"); return; }
+  if((el=T("[data-rain]"))){ rainSheet(Number(el.dataset.rain)); return; }
+  if((el=T("[data-rainagain]"))){ const d=Number(el.dataset.rainagain); delete rainRes[d]; rainSheet(d); return; }
+  if((el=T("[data-rainwish]"))){ const [d,k]=el.dataset.rainwish.split(":").map(Number); const x=rainRes[d]?.ideas?.[k]; if(x&&await guard(()=>put("wishes",null,{name:x.name,cat:CATS[x.cat]?x.cat:"tour",prio:"want",addr:x.address||"",note:["雨天備案",x.nameLocal&&x.nameLocal!==x.name?x.nameLocal:"",x.duration].filter(Boolean).join("・"),...stampBy()}))){ el.textContent="♥ 已加入"; el.disabled=true; toast("已加入想去清單"); } return; }
+  if(T("[data-hours]")){ hoursSheet(); return; }
+  if(T("[data-hrrun]")){ runHours(); return; }
+  if(T("[data-pass]")){ passSheet(); return; }
+  if(T("[data-psrun]")){ runPass(); return; }
   if((el=T("[data-fixov]"))){ el.disabled=true; el.textContent="調整中…"; await fixOverlaps(Number(el.dataset.fixov)); return; }
   if((el=T("[data-evtab]"))){ evTab=Number(el.dataset.evtab); renderEvents(); return; }
   if((el=T("[data-evwish]"))){ evToWish(el.dataset.evwish); return; }
