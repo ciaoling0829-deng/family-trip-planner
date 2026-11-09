@@ -2025,7 +2025,7 @@ function renderDayMap(){
   if(mapObj){ mapObj.remove(); mapObj=null; }
   if(!stops.length){ box.innerHTML=`<div class="panel day-map"><h3>🗺 Day ${S.day+1} 路線圖</h3><p class="sub" style="margin:0">這天排好有時間的行程後，這裡會顯示路線圖。</p></div>`; return; }
   const link=gmapsDir(stops);
-  box.innerHTML=`<div class="panel day-map"><div class="map-head"><h3>🗺 Day ${S.day+1} 路線圖</h3>${link?`<a class="link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">用 Google 地圖導航 ↗</a>`:""}</div>
+  box.innerHTML=`<div class="panel day-map"><div class="map-head"><h3>🗺 Day ${S.day+1} 路線圖</h3><button class="link" type="button" data-toilet>🚻 這天附近的廁所</button>${link?`<a class="link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">用 Google 地圖導航 ↗</a>`:""}</div>
     <div class="map-canvas" id="mapCanvas" role="img" aria-label="Day ${S.day+1} 的路線圖"></div>
     <ol class="map-list">${stops.map((s,k)=>`<li><span class="map-n">${k+1}</span><span class="num">${esc(s.time)}</span><span class="map-t">${esc(s.title)}</span><span class="sub" id="geo_${k}"></span></li>`).join("")}</ol>
     <p class="est" id="mapMsg">地圖上的線是依時間順序連起來的直線，實際交通請按「用 Google 地圖導航」。</p></div>`;
@@ -2330,6 +2330,77 @@ async function runPass(){
     await guard(()=>put("events","pass",{summary:String(r?.summary||"").slice(0,200),recommend:(r?.recommend||[]).slice(0,6),tips:(r?.tips||[]).slice(0,6),verified:!!r?.verified,sources:(r?.sources||[]).slice(0,10),at:Date.now(),by:S.user?.uid||null}));
     renderPass(); }
   catch(e){ const el=$("psBody"); if(el) el.innerHTML=`<p class="msg">${esc(aiError(e))}</p><div class="sheet-actions"><button class="ghost" type="button" data-psrun>再試一次</button></div>`; }
+}
+
+/* ---------- 🚻 找廁所（OpenStreetMap 的公共廁所、便利商店、百貨公司；不需要 AI） ---------- */
+const OVERPASS=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"];
+let WC=(()=>{ try{ return JSON.parse(localStorage.getItem("wcCache")||"{}"); }catch{ return {}; } })();
+const saveWC=()=>{ try{ const ks=Object.keys(WC).sort((a,b)=>WC[b].at-WC[a].at).slice(0,30); localStorage.setItem("wcCache",JSON.stringify(Object.fromEntries(ks.map(k=>[k,WC[k]])))); }catch{} };
+async function toiletsNear(p,r=800){
+  const key=`${p.lat.toFixed(3)},${p.lng.toFixed(3)},${r}`; const c=WC[key];
+  if(c&&Date.now()-c.at<7*864e5) return {list:c.list,cached:Date.now()-c.at>3600e3?c.at:0};
+  const q=`[out:json][timeout:20];(nwr["amenity"="toilets"](around:${r},${p.lat},${p.lng});nwr["shop"="convenience"](around:${r},${p.lat},${p.lng});nwr["shop"~"^(department_store|mall)$"](around:${r},${p.lat},${p.lng}););out center tags 150;`;
+  let j=null, lastErr=null;
+  for(const url of OVERPASS){ try{ const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"data="+encodeURIComponent(q)}); if(!res.ok) throw new Error("wc "+res.status); j=await res.json(); break; }catch(e){ lastErr=e; } }
+  if(!j){ if(c) return {list:c.list,cached:c.at}; throw lastErr||new Error("wc"); }
+  const list=(j.elements||[]).map(el=>{ const t=el.tags||{}, lat=el.lat??el.center?.lat, lng=el.lon??el.center?.lon; if(lat==null) return null;
+    const kind=t.amenity==="toilets"?"wc":t.shop==="convenience"?"cvs":"dept";
+    return {kind,lat,lng,name:t["name:zh"]||t.name||t.brand||"",brand:t.brand||"",wheel:t.wheelchair==="yes"||t["toilets:wheelchair"]==="yes"?"yes":t.wheelchair==="limited"?"limited":"",baby:t.changing_table==="yes"||t.diaper==="yes",h24:t.opening_hours==="24/7",hours:t.opening_hours||"",fee:t.fee==="yes",access:t.access||"",cvsWc:t.toilets||""}; }).filter(Boolean);
+  WC[key]={at:Date.now(),list}; saveWC(); return {list,cached:0};
+}
+const WC_KIND={wc:["🚻","公共廁所"],cvs:["🏪","便利商店"],dept:["🏬","百貨商場"]};
+let wcState={center:null,label:"",filter:"all",list:[],busy:false,err:"",cached:0}, wcMap=null;
+function wcCenters(){
+  const out=[]; const day=S.day;
+  for(const x of dayList(day)){ const p=itemGeo(x); if(p&&!isFlight(x)) out.push({label:`${x.time||""} ${geoName(x.title)}`.trim(),p}); }
+  const h=dp(day).hotelAddr&&!isUrl(dp(day).hotelAddr)?geoGet(dp(day).hotelAddr):null; if(h) out.push({label:`🏨 ${dp(day).hotel||"住宿"}`,p:h});
+  const seen=new Set(); return out.filter(c=>{ const k=c.p.lat.toFixed(4)+c.p.lng.toFixed(4); if(seen.has(k)) return false; seen.add(k); return true; }).slice(0,10);
+}
+function toiletSheet(){
+  const jp=guessCur(S.trip?.destination||S.trip?.title)==="JPY";
+  const cs=wcCenters();
+  openSheet(`<h2>🚻 找廁所</h2>
+    <p class="sub" style="margin-top:-6px">找附近的公共廁所、便利商店和百貨公司。日本的便利商店大多可以借用廁所。</p>
+    <div class="wc-centers"><button class="primary" type="button" data-wcme>📍 我現在的位置</button>${cs.map((c,k)=>`<button class="ghost sm" type="button" data-wcat="${k}">${esc(c.label)}</button>`).join("")}</div>
+    <div class="tags wc-filter">${[["all","全部"],["wc","只看公共廁所"],["wheel","♿ 無障礙"]].map(([k,n])=>`<button type="button" data-wcf="${k}" aria-pressed="${wcState.filter===k}">${n}</button>`).join("")}</div>
+    <div id="wcBody"></div>
+    ${jp?`<details class="fold wc-phrase"><summary><b>🗣 借廁所的日文</b></summary><div class="wc-say"><div class="wc-jp">トイレをお借りしてもいいですか？</div><div class="sub">to-i-re o o-ka-ri shi-te mo i-i de-su ka？（請問可以借用廁所嗎？）</div><div class="wc-jp" style="font-size:20px">トイレはどこですか？</div><div class="sub">to-i-re wa do-ko de-su ka？（請問廁所在哪裡？）</div></div></details>`:""}
+    <p class="est">資料來自 OpenStreetMap，可能不完整。便利商店的廁所有些不開放或要先問店員；車站裡通常也有廁所。</p>`,"toilet");
+  wcCentersCache=cs; renderWC();
+}
+let wcCentersCache=[];
+async function wcSearch(p,label){
+  wcState={...wcState,center:p,label,busy:true,err:""}; renderWC();
+  try{ const r=await toiletsNear(p); wcState.list=r.list; wcState.cached=r.cached; }
+  catch(e){ console.warn(e); wcState.err="查不到廁所資料，可能是網路不穩，請稍後再試。"; wcState.list=[]; }
+  wcState.busy=false; renderWC();
+}
+function renderWC(){
+  const el=$("wcBody"); if(!el) return; const s0=wcState;
+  document.querySelectorAll("[data-wcf]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.wcf===s0.filter));
+  if(!s0.center){ el.innerHTML=`<p class="sub">選「我現在的位置」，或選一個今天的行程地點，就會列出附近的廁所。</p>`; return; }
+  if(s0.busy){ el.innerHTML=`<div class="empty"><span class="spinner"></span>正在找 ${esc(s0.label)} 附近的廁所…</div>`; return; }
+  if(s0.err){ el.innerHTML=`<p class="msg">${esc(s0.err)}</p>`; return; }
+  const rows=s0.list.map(x=>({...x,m:Math.round(km(s0.center,x)*1000)})).filter(x=>s0.filter==="all"||(s0.filter==="wc"?x.kind==="wc":x.wheel)).sort((a,b)=>(a.m+(a.kind==="wc"?0:60))-(b.m+(b.kind==="wc"?0:60))).slice(0,25);
+  el.innerHTML=`<p class="sub" style="margin:0 0 6px">📍 ${esc(s0.label)} 附近 800 公尺內${s0.cached?`（沒有網路，顯示 ${stamp(s0.cached)} 查到的結果）`:""}</p>
+    <div class="area-map wc-map" id="wcMap"></div>
+    ${rows.length?`<ol class="wc-list">${rows.map((x,k)=>{ const kd=WC_KIND[x.kind]; return `<li><span class="wc-ico">${kd[0]}</span><span class="wc-txt"><b>${esc(x.name||kd[1])}</b><span class="sub">${kd[1]}・走路約 ${Math.max(1,Math.ceil(x.m/70))} 分鐘（${x.m<1000?x.m+" 公尺":(x.m/1000).toFixed(1)+" 公里"}）</span><span class="wc-tags">${x.wheel==="yes"?`<i>♿ 無障礙</i>`:x.wheel==="limited"?`<i>♿ 部分無障礙</i>`:""}${x.baby?`<i>🚼 尿布台</i>`:""}${x.h24?`<i>24 小時</i>`:""}${x.fee?`<i>要付費</i>`:""}${x.access==="customers"?`<i>限顧客</i>`:""}${x.kind==="cvs"&&x.cvsWc==="no"?`<i>沒有廁所</i>`:""}</span></span><a class="primary sm wc-go" href="https://www.google.com/maps/dir/?api=1&destination=${x.lat},${x.lng}&travelmode=walking" target="_blank" rel="noopener noreferrer">走過去</a></li>`; }).join("")}</ol>`:`<p>附近 800 公尺內沒有找到資料。可以試試附近的車站、百貨公司或便利商店。</p>`}`;
+  drawWC(rows);
+}
+async function drawWC(rows){
+  let L; try{ L=await loadLeaflet(); }catch{ const m=$("wcMap"); if(m) m.hidden=true; return; }
+  const el=$("wcMap"); if(!el||!wcState.center) return; if(wcMap){ try{ wcMap.remove(); }catch{} wcMap=null; }
+  wcMap=L.map(el,{scrollWheelZoom:false}).setView([wcState.center.lat,wcState.center.lng],16);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(wcMap);
+  L.marker([wcState.center.lat,wcState.center.lng],{icon:L.divIcon({className:"map-pin",html:`<span style="background:#C2413B">📍</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(wcMap).bindPopup(esc(wcState.label));
+  rows.forEach(x=>L.marker([x.lat,x.lng],{icon:L.divIcon({className:"map-pin",html:`<span style="background:${x.kind==="wc"?"#3B6FA8":x.kind==="cvs"?"#2F7D4F":"#7A5AA6"}">${WC_KIND[x.kind][0]}</span>`,iconSize:[26,26],iconAnchor:[13,13]})}).addTo(wcMap).bindPopup(`${esc(x.name||WC_KIND[x.kind][1])}・走路約 ${Math.max(1,Math.ceil(x.m/70))} 分鐘`));
+}
+function wcMe(){
+  if(!navigator.geolocation){ wcState.err="這支手機不能取得位置，請改選行程地點。"; wcState.center={lat:0,lng:0}; renderWC(); return; }
+  wcState={...wcState,center:{lat:0,lng:0},label:"我現在的位置",busy:true,err:""}; renderWC();
+  navigator.geolocation.getCurrentPosition(pos=>wcSearch({lat:pos.coords.latitude,lng:pos.coords.longitude},"我現在的位置"),
+    err=>{ wcState.busy=false; wcState.err=err.code===1?"沒有允許使用位置。請到 iPhone 的「設定」→「隱私權與安全性」→「定位服務」打開 Safari 的定位，或改選下面的行程地點。":"暫時取不到位置，請到空曠的地方再試，或改選行程地點。"; renderWC(); },
+    {enableHighAccuracy:true,timeout:12000,maximumAge:60000});
 }
 
 /* ---------- 匯率換算 ---------- */
@@ -2718,6 +2789,10 @@ document.addEventListener("click",async e=>{
   if(T("[data-events]")){ evTab=S.day; eventsSheet(); return; }
   if(T("[data-evrun]")){ runEvents(); return; }
   if(T("[data-stay]")){ staySheet(); return; }
+  if(T("[data-toilet]")){ toiletSheet(); return; }
+  if(T("[data-wcme]")){ wcMe(); return; }
+  if((el=T("[data-wcat]"))){ const c=wcCentersCache[Number(el.dataset.wcat)]; if(c) wcSearch(c.p,c.label); return; }
+  if((el=T("[data-wcf]"))){ wcState.filter=el.dataset.wcf; renderWC(); return; }
   if((el=T("[data-addrcard]"))){ addrCard(el.dataset.addrcard); return; }
   if((el=T("[data-vote]"))){ toggleVote(el.dataset.vote); return; }
   if((el=T("[data-sppayer]"))){ splitPayer=el.dataset.sppayer; renderSplit(); return; }

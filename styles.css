@@ -533,3 +533,16 @@ button.area-w{border:0}
 .split-bal .plus{background:#DDEFE4;color:#1F5E3A}.split-bal .minus{background:var(--bad-soft);color:var(--bad)}
 .split-moves{display:grid;gap:4px;background:var(--lantern-soft);border-radius:10px;padding:8px 12px;font-size:15px;margin-bottom:8px}
 .split-item{align-items:center}.split-item .item-del{flex:0 0 auto}
+/* 找廁所 */
+.wc-bar{box-sizing:border-box;width:100%;display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;border:2px solid var(--c-move);background:color-mix(in srgb,var(--c-move) 10%,var(--surface));color:var(--ink);border-radius:14px;font-size:18px;font-weight:800}
+.wc-centers{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+.wc-filter{margin-bottom:10px}
+.wc-map{aspect-ratio:4/3;max-height:45vh}
+.wc-list{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:8px}
+.wc-list li{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-width:0}
+.wc-ico{font-size:26px;flex:0 0 auto}
+.wc-txt{flex:1;min-width:0;display:grid;gap:2px;font-size:16px}.wc-txt b{font-size:17px;overflow-wrap:anywhere}
+.wc-tags{display:flex;flex-wrap:wrap;gap:4px}.wc-tags i{font-style:normal;font-size:12px;background:var(--sunk);border-radius:999px;padding:1px 8px}
+.wc-go{flex:0 0 auto;text-decoration:none;text-align:center}
+.wc-say{display:grid;gap:4px;margin-top:8px;background:#fff;color:#111;border-radius:12px;padding:12px;border:2px solid var(--ink)}
+.wc-jp{font-size:24px;font-weight:800;line-height:1.35}.wc-say .sub{color:#555}
